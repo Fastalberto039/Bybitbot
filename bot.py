@@ -75,9 +75,9 @@ async def check_open_interest(session: aiohttp.ClientSession, symbol: str) -> fl
     if not data or len(data["result"]["list"]) < 2:
         return None
 
-    oi_list = data["result"]["list"]
-    curr_oi = float(oi_list[0]["openInterest"])
-    prev_oi = float(oi_list[1]["openInterest"])
+    curr_item, prev_item = data["result"]["list"][:2]
+    curr_oi = float(curr_item["openInterest"])
+    prev_oi = float(prev_item["openInterest"])
     if prev_oi == 0:
         return None
 
@@ -86,7 +86,6 @@ async def check_open_interest(session: aiohttp.ClientSession, symbol: str) -> fl
 
 async def check_whales_vs_retail(session: aiohttp.ClientSession, symbol: str) -> dict | None:
     """Условие 2: Соотношение Лонг/Шорт (Толпа vs Киты)."""
-    # 1. Толпа (Bybit Account Ratio, 1h)
     bybit_data = await fetch_bybit(
         session,
         "/v5/market/account-ratio",
@@ -95,10 +94,10 @@ async def check_whales_vs_retail(session: aiohttp.ClientSession, symbol: str) ->
     if not bybit_data or not bybit_data["result"]["list"]:
         return None
 
-    retail_buy = float(bybit_data["result"]["list"][0]["buyRatio"]) * 100
-    retail_sell = float(bybit_data["result"]["list"][0]["sellRatio"]) * 100
+    first_retail = next(iter(bybit_data["result"]["list"]))
+    retail_buy = float(first_retail["buyRatio"]) * 100
+    retail_sell = float(first_retail["sellRatio"]) * 100
 
-    # 2. Киты (Binance Top Trader Ratio или резервный OKX Top Trader Ratio)
     whale_buy = None
     whale_sell = None
 
@@ -108,8 +107,9 @@ async def check_whales_vs_retail(session: aiohttp.ClientSession, symbol: str) ->
         {"symbol": symbol, "period": "1h", "limit": 1}
     )
     if binance_data and isinstance(binance_data, list) and len(binance_data) > 0:
-        whale_buy = float(binance_data[0]["longAccount"]) * 100
-        whale_sell = float(binance_data[0]["shortAccount"]) * 100
+        first_whale = next(iter(binance_data))
+        whale_buy = float(first_whale["longAccount"]) * 100
+        whale_sell = float(first_whale["shortAccount"]) * 100
     else:
         coin = symbol.replace("USDT", "")
         okx_data = await fetch_json(
@@ -118,7 +118,9 @@ async def check_whales_vs_retail(session: aiohttp.ClientSession, symbol: str) ->
             {"ccy": coin, "period": "1H"}
         )
         if okx_data and okx_data.get("code") == "0" and okx_data.get("data"):
-            ratio = float(okx_data["data"][0][1])
+            first_row = next(iter(okx_data["data"]))
+            _, ratio_str, *_ = first_row
+            ratio = float(ratio_str)
             whale_buy = (ratio / (ratio + 1)) * 100
             whale_sell = 100 - whale_buy
 
@@ -148,9 +150,10 @@ async def check_liquidation_heatmap(session: aiohttp.ClientSession, symbol: str,
     liq_zones_below = []
 
     for c in candles:
-        high_p = float(c[2])
-        low_p = float(c[3])
-        vol = float(c[5])
+        _, _, high_str, low_str, _, vol_str, *_ = c
+        high_p = float(high_str)
+        low_p = float(low_str)
+        vol = float(vol_str)
 
         for lev_offset in [0.005, 0.018, 0.038]:
             zone_up = high_p * (1 + lev_offset)
@@ -163,12 +166,14 @@ async def check_liquidation_heatmap(session: aiohttp.ClientSession, symbol: str,
     def find_hottest_cluster(zones, is_above: bool):
         if not zones:
             return None
-        zones.sort(key=lambda x: x[0], reverse=not is_above)
-        vol_threshold = sorted([z[1] for z in zones])[int(len(zones) * 0.8)]
-        hot_zones = [z for z in zones if z[1] >= vol_threshold]
+        zones.sort(key=lambda item: item[0], reverse=not is_above)
+        volumes = sorted([v for _, v in zones])
+        cutoff_idx = int(len(volumes) * 0.8)
+        vol_threshold = volumes[cutoff_idx] if cutoff_idx < len(volumes) else volumes[-1]
+        hot_zones = [(p, v) for p, v in zones if v >= vol_threshold]
         if not hot_zones:
             return None
-        nearest_price = hot_zones[0][0]
+        nearest_price, _ = next(iter(hot_zones))
         dist_pct = abs(nearest_price - curr_price) / curr_price * 100
         if dist_pct <= HEATMAP_PROXIMITY_PCT:
             return {"price": round(nearest_price, 4), "dist_pct": round(dist_pct, 2)}
@@ -239,5 +244,6 @@ async def scan_market():
 
 if __name__ == "__main__":
     asyncio.run(scan_market())
+
 
 
