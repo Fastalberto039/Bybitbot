@@ -70,24 +70,26 @@ async def get_market_history(session, symbol, source):
         tp = await fetch_json(session, f"{source}/futures/data/topLongShortPositionRatio", {"symbol": symbol, "period": "1h", "limit": 1})
         if isinstance(kl, list) and len(kl) >= 24 and isinstance(oi, list) and len(oi) >= 6:
             for c in kl:
-                candles.append((float(c[1]), float(c[2]), float(c[3]), float(c[4]), float(c[5])))
+                _, o, h, l, cl, v, *_ = c
+                candles.append((float(o), float(h), float(l), float(cl), float(v)))
             oi_series = [float(x["sumOpenInterestValue"]) for x in oi]
             if isinstance(gl, list) and gl:
-                r_long = float(gl[0]["longAccount"]) * 100
+                r_long = float(next(iter(gl))["longAccount"]) * 100
             if isinstance(tp, list) and tp:
-                w_long = float(tp[0]["longAccount"]) * 100
+                w_long = float(next(iter(tp))["longAccount"]) * 100
             return candles, oi_series, r_long, w_long
     kl_b = await fetch_bybit(session, "/v5/market/kline", {"category": "linear", "symbol": symbol, "interval": "60", "limit": 48})
     oi_b = await fetch_bybit(session, "/v5/market/open-interest", {"category": "linear", "symbol": symbol, "intervalTime": "1h", "limit": 24})
     ac_b = await fetch_bybit(session, "/v5/market/account-ratio", {"category": "linear", "symbol": symbol, "period": "1h", "limit": 1})
     if kl_b and oi_b and len(kl_b["result"]["list"]) >= 24 and len(oi_b["result"]["list"]) >= 6:
         for c in reversed(kl_b["result"]["list"]):
-            candles.append((float(c[1]), float(c[2]), float(c[3]), float(c[4]), float(c[5])))
+            _, o, h, l, cl, v, *_ = c
+            candles.append((float(o), float(h), float(l), float(cl), float(v)))
         oi_series = [float(x["openInterest"]) for x in reversed(oi_b["result"]["list"])]
         if ac_b and ac_b["result"]["list"]:
-            r_long = float(ac_b["result"]["list"][0]["buyRatio"]) * 100
+            r_long = float(next(iter(ac_b["result"]["list"]))["buyRatio"]) * 100
         tp_b = await fetch_json(session, "https://binance.com/futures/data/topLongShortPositionRatio", {"symbol": symbol, "period": "1h", "limit": 1})
-        w_long = float(tp_b[0]["longAccount"]) * 100 if isinstance(tp_b, list) and tp_b else 100.0 - r_long
+        w_long = float(next(iter(tp_b))["longAccount"]) * 100 if isinstance(tp_b, list) and tp_b else 100.0 - r_long
         return candles, oi_series, r_long, w_long
     return None, None, 50.0, 50.0
 
@@ -114,9 +116,11 @@ async def scan_market():
                 await bot.send_message(CHAT_ID, "\n".join(msg), parse_mode="Markdown")
             await asyncio.sleep(0.25)
     await bot.session.close()
+    print("Сканирование 9 сетапов завершено.")
 
 if __name__ == "__main__":
     asyncio.run(scan_market())
+
 
 
 
