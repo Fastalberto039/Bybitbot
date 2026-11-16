@@ -7,7 +7,7 @@ BOT_TOKEN = os.getenv("BOT_TOKEN")
 CHAT_ID = os.getenv("CHAT_ID")
 
 # Настройки стратегии (1 Час)
-OI_CHANGE_THRESHOLD = 8.0      # Рост ОИ от 8% за 1 час
+OI_CHANGE_THRESHOLD = 5.0      # Рост ОИ от 8% за 1 час
 RETAIL_SKEW_THRESHOLD = 60.0   # Перекос толпы > 60% в одну сторону
 WHALE_SKEW_THRESHOLD = 55.0    # Перевес китов > 55% в противоположную сторону
 HEATMAP_PROXIMITY_PCT = 1.5    # Подход к желто-оранжевой зоне ближе 1.5%
