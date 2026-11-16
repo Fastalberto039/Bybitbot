@@ -10,13 +10,14 @@ def check_heatmap_zones(candles: list, curr_price: float):
     def nearest_hot(zones, is_up):
         if not zones:
             return None
-        zones.sort(key=lambda x: x[0], reverse=not is_up)
+        zones.sort(key=lambda x: next(iter(x)), reverse=not is_up)
         vols = sorted([v for _, v in zones])
-        thresh = vols[int(len(vols) * 0.8)]
+        idx = int(len(vols) * 0.8)
+        thresh = vols[idx] if idx < len(vols) else vols[-1]
         hot = [p for p, v in zones if v >= thresh]
         if not hot:
             return None
-        target = hot[0]
+        target = next(iter(hot))
         dist = abs(target - curr_price) / curr_price * 100
         return (round(target, 4), round(dist, 2)) if dist <= 1.5 else None
     return nearest_hot(above, True), nearest_hot(below, False)
@@ -26,8 +27,9 @@ def evaluate_all_9_setups(candles, oi_series, price, funding, retail_long, whale
     retail_short = 100.0 - retail_long
     whale_short = 100.0 - whale_long
     o1, h1, l1, c1, v1 = candles[-1]
+    o3, _, _, _, _ = candles[-3]
     price_chg_1h = (price - o1) / o1 * 100 if o1 else 0
-    price_chg_3h = (price - candles[-3][0]) / candles[-3][0] * 100
+    price_chg_3h = (price - o3) / o3 * 100 if o3 else 0
     oi_curr = oi_series[-1]
     oi_1h_ago = oi_series[-2]
     oi_3h_ago = oi_series[-4]
@@ -35,21 +37,23 @@ def evaluate_all_9_setups(candles, oi_series, price, funding, retail_long, whale
     oi_chg_3h = (oi_curr - oi_3h_ago) / oi_3h_ago * 100 if oi_3h_ago else 0
     oi_max_24h = max(oi_series)
     last_24 = candles[-24:]
-    high_24h = max(x[1] for x in last_24)
-    low_24h = min(x[2] for x in last_24)
-    high_48h = max(x[1] for x in candles)
-    low_48h = min(x[2] for x in candles)
-    avg_vol_20 = sum(x[4] for x in candles[-21:-1]) / 20
-    avg_vol_3 = sum(x[4] for x in candles[-3:]) / 3
+    high_24h = max(h for _, h, _, _, _ in last_24)
+    low_24h = min(l for _, _, l, _, _ in last_24)
+    high_48h = max(h for _, h, _, _, _ in candles)
+    low_48h = min(l for _, _, l, _, _ in candles)
+    avg_vol_20 = sum(v for _, _, _, _, v in candles[-21:-1]) / 20
+    avg_vol_3 = sum(v for _, _, _, _, v in candles[-3:]) / 3
     up_zone, dn_zone = check_heatmap_zones(candles, price)
     if oi_chg_1h >= 5.0 and retail_short >= 60.0 and whale_long >= 55.0 and up_zone:
-        hits.append(f"🟢 #1 Перекос+Карта ЛОНГ (цель {up_zone[0]}, {up_zone[1]}%)")
+        u_p, u_d = up_zone
+        hits.append(f"🟢 #1 Перекос+Карта ЛОНГ (цель {u_p}, {u_d}%)")
     if oi_chg_1h >= 5.0 and retail_long >= 60.0 and whale_short >= 55.0 and dn_zone:
-        hits.append(f"🔴 #1 Перекос+Карта ШОРТ (цель {dn_zone[0]}, {dn_zone[1]}%)")
+        d_p, d_d = dn_zone
+        hits.append(f"🔴 #1 Перекос+Карта ШОРТ (цель {d_p}, {d_d}%)")
     if price_chg_1h >= 1.0 and oi_chg_1h >= 5.0 and funding < 0.0:
         hits.append("🟢 #2 Топливо для ЛОНГА (Цена↑ + ОИ↑ + Фандинг<0)")
     pump_24h = (high_24h - low_24h) / low_24h * 100 if low_24h else 0
-    flat_range_3h = (max(x[1] for x in candles[-3:]) - min(x[2] for x in candles[-3:])) / price * 100
+    flat_range_3h = (max(h for _, h, _, _, _ in candles[-3:]) - min(l for _, _, l, _, _ in candles[-3:])) / price * 100
     if pump_24h >= 5.0 and price > low_24h + (high_24h - low_24h) * 0.65 and flat_range_3h <= 2.5 and oi_chg_3h >= -0.5 and funding <= -0.05 and avg_vol_3 < avg_vol_20:
         hits.append("🟢 #3 Рост-проторговка-рост (ЛОНГ)")
     if price_chg_3h <= -3.0 and l1 <= low_24h * 1.003 and (oi_chg_1h >= 4.0 or oi_chg_3h >= 6.0) and funding <= -0.02 and v1 >= avg_vol_20 * 1.8:
@@ -70,3 +74,4 @@ def evaluate_all_9_setups(candles, oi_series, price, funding, retail_long, whale
     if price_chg_3h >= 5.0 and upper_wick > body1 * 1.3 and oi_chg_3h >= 6.0 and oi_chg_1h <= 0.5 and v1 >= avg_vol_20 * 2.5 and funding > 0.005 and retail_long >= 60.0:
         hits.append("🔴 #9 Капитуляция шортов (ШОРТ на кульминации)")
     return hits, price_chg_1h, oi_chg_1h, retail_long, whale_long
+
