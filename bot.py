@@ -95,6 +95,7 @@ async def get_market_history(session, symbol, source):
 
 async def scan_market():
     bot = Bot(token=BOT_TOKEN)
+    await bot.send_message(CHAT_ID, "✅ Тест пройден! Связь с Telegram работает.")
     async with aiohttp.ClientSession() as session:
         source = await get_active_source(session)
         universe = await get_universe(session, source)
@@ -120,6 +121,7 @@ async def scan_market():
 
 if __name__ == "__main__":
     asyncio.run(scan_market())
+
 
 
 
