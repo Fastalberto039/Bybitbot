@@ -12,6 +12,12 @@ RETAIL_SKEW_THRESHOLD = 60.0   # Перекос толпы > 60% в одну с�
 WHALE_SKEW_THRESHOLD = 55.0    # Перевес китов > 55% в противоположную сторону
 HEATMAP_PROXIMITY_PCT = 1.5    # Подход к желто-оранжевой зоне ближе 1.5%
 
+# Ваш личный список монет
+WATCHLIST = [
+    "APTUSDT", "ARBUSDT", "OPUSDT",
+    "DOTUSDT", "ATOMUSDT", "ZROUSDT", "ZKUSDT", "STRKUSDT"
+]
+
 BYBIT_BASE = "https://bybit.com"
 BINANCE_BASE = "https://binance.com"
 
@@ -24,18 +30,27 @@ async def fetch_json(session: aiohttp.ClientSession, url: str, params: dict = No
         print(f"Ошибка запроса {url}: {e}")
     return None
 
-async def get_top_10_symbols(session: aiohttp.ClientSession) -> list[dict]:
-    """Получает топ-10 фьючерсов Bybit по обороту за 24ч."""
+async def get_target_symbols(session: aiohttp.ClientSession) -> list[dict]:
+    """Объединяет Топ-10 фьючерсов Bybit по обороту и ваш личный список WATCHLIST."""
     data = await fetch_json(session, f"{BYBIT_BASE}/v5/market/tickers", {"category": "linear"})
     if not data or data.get("retCode") != 0:
         return []
 
-    tickers = [
+    all_usdt = [
         item for item in data["result"]["list"]
         if item["symbol"].endswith("USDT") and not item["symbol"].endswith("PERP")
     ]
-    tickers.sort(key=lambda x: float(x.get("turnover24h", 0)), reverse=True)
-    return tickers[:10]
+    
+    all_usdt.sort(key=lambda x: float(x.get("turnover24h", 0)), reverse=True)
+    top_10 = all_usdt[:10]
+    top_10_names = {item["symbol"] for item in top_10}
+
+    extra_coins = [
+        item for item in all_usdt
+        if item["symbol"] in WATCHLIST and item["symbol"] not in top_10_names
+    ]
+
+    return top_10 + extra_coins
 
 async def check_open_interest(session: aiohttp.ClientSession, symbol: str) -> float | None:
     """Условие 1: Изменение открытого интереса за 1 час (%)."""
@@ -135,10 +150,10 @@ async def check_liquidation_heatmap(session: aiohttp.ClientSession, symbol: str,
 async def scan_market():
     bot = Bot(token=BOT_TOKEN)
     async with aiohttp.ClientSession() as session:
-        top_10 = await get_top_10_symbols(session)
-        print(f"Топ-10 монет Bybit: {[t['symbol'] for t in top_10]}")
+        targets = await get_target_symbols(session)
+        print(f"Сканирую монеты: {[t['symbol'] for t in targets]}")
 
-        for ticker in top_10:
+        for ticker in targets:
             symbol = ticker["symbol"]
             curr_price = float(ticker["lastPrice"])
 
