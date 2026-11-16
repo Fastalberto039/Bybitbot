@@ -18,29 +18,41 @@ WATCHLIST = [
     "DOTUSDT", "ATOMUSDT", "ZROUSDT", "ZKUSDT", "STRKUSDT"
 ]
 
-BYBIT_BASE = "https://bybit.com"
+BYBIT_URLS = ["https://bybit.com", "https://bytick.com"]
 BINANCE_BASE = "https://binance.com"
+OKX_BASE = "https://okx.com"
+
 
 async def fetch_json(session: aiohttp.ClientSession, url: str, params: dict = None):
+    headers = {"User-Agent": "Mozilla/5.0"}
     try:
-        async with session.get(url, params=params, timeout=10) as resp:
+        async with session.get(url, params=params, headers=headers, timeout=10) as resp:
             if resp.status == 200:
                 return await resp.json()
     except Exception as e:
         print(f"Ошибка запроса {url}: {e}")
     return None
 
+
+async def fetch_bybit(session: aiohttp.ClientSession, endpoint: str, params: dict = None):
+    for base in BYBIT_URLS:
+        data = await fetch_json(session, f"{base}{endpoint}", params)
+        if data and data.get("retCode") == 0:
+            return data
+    return None
+
+
 async def get_target_symbols(session: aiohttp.ClientSession) -> list[dict]:
     """Объединяет Топ-10 фьючерсов Bybit по обороту и ваш личный список WATCHLIST."""
-    data = await fetch_json(session, f"{BYBIT_BASE}/v5/market/tickers", {"category": "linear"})
-    if not data or data.get("retCode") != 0:
+    data = await fetch_bybit(session, "/v5/market/tickers", {"category": "linear"})
+    if not data:
         return []
 
     all_usdt = [
         item for item in data["result"]["list"]
         if item["symbol"].endswith("USDT") and not item["symbol"].endswith("PERP")
     ]
-    
+
     all_usdt.sort(key=lambda x: float(x.get("turnover24h", 0)), reverse=True)
     top_10 = all_usdt[:10]
     top_10_names = {item["symbol"] for item in top_10}
@@ -52,14 +64,15 @@ async def get_target_symbols(session: aiohttp.ClientSession) -> list[dict]:
 
     return top_10 + extra_coins
 
+
 async def check_open_interest(session: aiohttp.ClientSession, symbol: str) -> float | None:
     """Условие 1: Изменение открытого интереса за 1 час (%)."""
-    data = await fetch_json(
+    data = await fetch_bybit(
         session,
-        f"{BYBIT_BASE}/v5/market/open-interest",
+        "/v5/market/open-interest",
         {"category": "linear", "symbol": symbol, "intervalTime": "1h", "limit": 2}
     )
-    if not data or data.get("retCode") != 0 or len(data["result"]["list"]) < 2:
+    if not data or len(data["result"]["list"]) < 2:
         return None
 
     oi_list = data["result"]["list"]
@@ -70,29 +83,47 @@ async def check_open_interest(session: aiohttp.ClientSession, symbol: str) -> fl
 
     return ((curr_oi - prev_oi) / prev_oi) * 100
 
+
 async def check_whales_vs_retail(session: aiohttp.ClientSession, symbol: str) -> dict | None:
-    """Условие 2: Соотношение Лонг/Шорт (Толпа на Bybit vs Киты на Binance)."""
-    bybit_data = await fetch_json(
+    """Условие 2: Соотношение Лонг/Шорт (Толпа vs Киты)."""
+    # 1. Толпа (Bybit Account Ratio, 1h)
+    bybit_data = await fetch_bybit(
         session,
-        f"{BYBIT_BASE}/v5/market/account-ratio",
+        "/v5/market/account-ratio",
         {"category": "linear", "symbol": symbol, "period": "1h", "limit": 1}
     )
-    binance_data = await fetch_json(
-        session,
-        f"{BINANCE_BASE}/futures/data/topLongShortPositionRatio",
-        {"symbol": symbol, "period": "1h", "limit": 1}
-    )
-
-    if not bybit_data or bybit_data.get("retCode") != 0 or not bybit_data["result"]["list"]:
-        return None
-    if not binance_data or not isinstance(binance_data, list) or len(binance_data) == 0:
+    if not bybit_data or not bybit_data["result"]["list"]:
         return None
 
     retail_buy = float(bybit_data["result"]["list"][0]["buyRatio"]) * 100
     retail_sell = float(bybit_data["result"]["list"][0]["sellRatio"]) * 100
 
-    whale_buy = float(binance_data[0]["longAccount"]) * 100
-    whale_sell = float(binance_data[0]["shortAccount"]) * 100
+    # 2. Киты (Binance Top Trader Ratio или резервный OKX Top Trader Ratio)
+    whale_buy = None
+    whale_sell = None
+
+    binance_data = await fetch_json(
+        session,
+        f"{BINANCE_BASE}/futures/data/topLongShortPositionRatio",
+        {"symbol": symbol, "period": "1h", "limit": 1}
+    )
+    if binance_data and isinstance(binance_data, list) and len(binance_data) > 0:
+        whale_buy = float(binance_data[0]["longAccount"]) * 100
+        whale_sell = float(binance_data[0]["shortAccount"]) * 100
+    else:
+        coin = symbol.replace("USDT", "")
+        okx_data = await fetch_json(
+            session,
+            f"{OKX_BASE}/api/v5/rubik/stat/contracts/long-short-account-ratio-contract-top-trader",
+            {"ccy": coin, "period": "1H"}
+        )
+        if okx_data and okx_data.get("code") == "0" and okx_data.get("data"):
+            ratio = float(okx_data["data"][0][1])
+            whale_buy = (ratio / (ratio + 1)) * 100
+            whale_sell = 100 - whale_buy
+
+    if whale_buy is None:
+        return None
 
     return {
         "retail_long": round(retail_buy, 1),
@@ -101,14 +132,15 @@ async def check_whales_vs_retail(session: aiohttp.ClientSession, symbol: str) ->
         "whale_short": round(whale_sell, 1),
     }
 
+
 async def check_liquidation_heatmap(session: aiohttp.ClientSession, symbol: str, curr_price: float) -> dict | None:
     """Условие 3: Расчет желто-оранжевых кластеров ликвидаций (плечи 10x, 25x, 50x) по 1H свечам."""
-    data = await fetch_json(
+    data = await fetch_bybit(
         session,
-        f"{BYBIT_BASE}/v5/market/kline",
+        "/v5/market/kline",
         {"category": "linear", "symbol": symbol, "interval": "60", "limit": 48}
     )
-    if not data or data.get("retCode") != 0:
+    if not data:
         return None
 
     candles = data["result"]["list"]
@@ -147,11 +179,12 @@ async def check_liquidation_heatmap(session: aiohttp.ClientSession, symbol: str,
         "below": find_hottest_cluster(liq_zones_below, False),
     }
 
+
 async def scan_market():
     bot = Bot(token=BOT_TOKEN)
     async with aiohttp.ClientSession() as session:
         targets = await get_target_symbols(session)
-        print(f"Сканирую монеты: {[t['symbol'] for t in targets]}")
+        print(f"Сканирую монеты ({len(targets)} шт.): {[t['symbol'] for t in targets]}")
 
         for ticker in targets:
             symbol = ticker["symbol"]
@@ -198,9 +231,13 @@ async def scan_market():
                 )
                 await bot.send_message(CHAT_ID, msg, parse_mode="Markdown")
 
-            await asyncio.sleep(0.5)
+            await asyncio.sleep(0.3)
 
     await bot.session.close()
+    print("Проверка успешно завершена.")
+
 
 if __name__ == "__main__":
     asyncio.run(scan_market())
+
+
