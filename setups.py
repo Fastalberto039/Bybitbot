@@ -19,7 +19,7 @@ def check_heatmap_zones(candles: list, curr_price: float):
             return None
         target = next(iter(hot))
         dist = abs(target - curr_price) / curr_price * 100
-        return (round(target, 4), round(dist, 2)) if dist <= 1.5 else None
+        return (round(target, 4), round(dist, 2)) if 0.8 <= dist <= 2.5 else None
     return nearest_hot(above, True), nearest_hot(below, False)
 
 def evaluate_all_9_setups(candles, oi_series, price, funding, retail_long, whale_long):
@@ -74,4 +74,5 @@ def evaluate_all_9_setups(candles, oi_series, price, funding, retail_long, whale
     if price_chg_3h >= 5.0 and upper_wick > body1 * 1.3 and oi_chg_3h >= 6.0 and oi_chg_1h <= 0.5 and v1 >= avg_vol_20 * 2.5 and funding > 0.005 and retail_long >= 60.0:
         hits.append("🔴 #9 Капитуляция шортов (ШОРТ на кульминации)")
     return hits, price_chg_1h, oi_chg_1h, retail_long, whale_long
+
 
