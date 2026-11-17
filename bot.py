@@ -8,8 +8,21 @@ BOT_TOKEN = os.getenv("BOT_TOKEN")
 CHAT_ID = os.getenv("CHAT_ID")
 TOP_N_COINS = 50
 WATCHLIST = ["APTUSDT", "ARBUSDT", "OPUSDT", "DOTUSDT", "ATOMUSDT", "ZROUSDT", "ZKUSDT", "STRKUSDT"]
+STOCK_BLACKLIST = {
+    "MUUUSDT", "NVDAUSDT", "TSLAUSDT", "AAPLUSDT", "AMZNUSDT", "MSFTUSDT",
+    "GOOGLUSDT", "GOOGUSDT", "METAUSDT", "COINUSDT", "MSTRUSDT", "HOODUSDT",
+    "PLTRUSDT", "AMDUSDT", "INTCUSDT", "NFLXUSDT", "BABAUSDT", "QQQUSDT",
+    "SPYUSDT", "GLDUSDT", "SLVUSDT", "XAUUSDT", "XAGUSDT", "CRCLUSDT"
+}
 BINANCE_URLS = ["https://binance.com", "https://binance.com", "https://binance.com"]
 BYBIT_URLS = ["https://bybit.com", "https://bytick.com"]
+
+def is_valid_crypto(symbol: str) -> bool:
+    if not symbol.endswith("USDT") or "_" in symbol or symbol.endswith("PERP"):
+        return False
+    if symbol in STOCK_BLACKLIST or "STOCK" in symbol:
+        return False
+    return True
 
 async def fetch_json(session, url, params=None):
     try:
@@ -40,7 +53,7 @@ async def get_universe(session, source):
         premiums = await fetch_json(session, f"{source}/fapi/v1/premiumIndex")
         if isinstance(tickers, list) and isinstance(premiums, list):
             fund_map = {p["symbol"]: float(p.get("lastFundingRate", 0)) * 100 for p in premiums}
-            pairs = [t for t in tickers if t["symbol"].endswith("USDT") and "_" not in t["symbol"]]
+            pairs = [t for t in tickers if is_valid_crypto(t["symbol"])]
             pairs.sort(key=lambda x: float(x.get("quoteVolume", 0)), reverse=True)
             top = pairs[:TOP_N_COINS]
             top_names = {x["symbol"] for x in top}
@@ -52,7 +65,7 @@ async def get_universe(session, source):
                 return universe
     data = await fetch_bybit(session, "/v5/market/tickers", {"category": "linear"})
     if data:
-        pairs = [x for x in data["result"]["list"] if x["symbol"].endswith("USDT") and not x["symbol"].endswith("PERP")]
+        pairs = [x for x in data["result"]["list"] if is_valid_crypto(x["symbol"])]
         pairs.sort(key=lambda x: float(x.get("turnover24h", 0)), reverse=True)
         top = pairs[:TOP_N_COINS]
         top_names = {x["symbol"] for x in top}
@@ -99,7 +112,7 @@ async def scan_market():
     async with aiohttp.ClientSession() as session:
         source = await get_active_source(session)
         universe = await get_universe(session, source)
-        print(f"Источник: {source} | Монет: {len(universe)}")
+        print(f"Источник: {source} | Криптомонет к проверке: {len(universe)}")
         for item in universe:
             candles, oi_series, rl, wl = await get_market_history(session, item["symbol"], item["source"])
             if not candles or not oi_series:
@@ -121,6 +134,7 @@ async def scan_market():
 
 if __name__ == "__main__":
     asyncio.run(scan_market())
+
 
 
 
