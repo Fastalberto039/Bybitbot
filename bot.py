@@ -9,18 +9,21 @@ CHAT_ID = os.getenv("CHAT_ID")
 TOP_N_COINS = 50
 WATCHLIST = ["APTUSDT", "ARBUSDT", "OPUSDT", "DOTUSDT", "ATOMUSDT", "ZROUSDT", "ZKUSDT", "STRKUSDT"]
 STOCK_BLACKLIST = {
-    "MUUUSDT", "NVDAUSDT", "TSLAUSDT", "AAPLUSDT", "AMZNUSDT", "MSFTUSDT",
-    "GOOGLUSDT", "GOOGUSDT", "METAUSDT", "COINUSDT", "MSTRUSDT", "HOODUSDT",
-    "PLTRUSDT", "AMDUSDT", "INTCUSDT", "NFLXUSDT", "BABAUSDT", "QQQUSDT",
-    "SPYUSDT", "GLDUSDT", "SLVUSDT", "XAUUSDT", "XAGUSDT", "CRCLUSDT"
+    "MUUUSDT", "KORUUSDT", "SOXLUSDT", "SOXSUSDT", "TQQQUSDT", "SQQQUSDT",
+    "NVDAUSDT", "TSLAUSDT", "AAPLUSDT", "AMZNUSDT", "MSFTUSDT", "GOOGLUSDT",
+    "GOOGUSDT", "METAUSDT", "COINUSDT", "MSTRUSDT", "HOODUSDT", "PLTRUSDT",
+    "AMDUSDT", "INTCUSDT", "NFLXUSDT", "BABAUSDT", "QQQUSDT", "SPYUSDT",
+    "GLDUSDT", "SLVUSDT", "XAUUSDT", "XAGUSDT", "CRCLUSDT", "IBITUSDT", "ETHAUSDT"
 }
 BINANCE_URLS = ["https://binance.com", "https://binance.com", "https://binance.com"]
 BYBIT_URLS = ["https://bybit.com", "https://bytick.com"]
 
-def is_valid_crypto(symbol: str) -> bool:
+def is_valid_crypto(symbol: str, allowed_symbols: set | None = None) -> bool:
     if not symbol.endswith("USDT") or "_" in symbol or symbol.endswith("PERP"):
         return False
     if symbol in STOCK_BLACKLIST or "STOCK" in symbol:
+        return False
+    if allowed_symbols is not None and symbol not in allowed_symbols:
         return False
     return True
 
@@ -46,14 +49,29 @@ async def fetch_bybit(session, endpoint, params=None):
             return data
     return None
 
+async def get_binance_crypto_set(session, source):
+    info = await fetch_json(session, f"{source}/fapi/v1/exchangeInfo")
+    if not info or "symbols" not in info:
+        return None
+    allowed = set()
+    for s in info["symbols"]:
+        if s.get("status") != "TRADING" or s.get("contractType") != "PERPETUAL":
+            continue
+        underlying = s.get("underlyingType", "COIN")
+        sub_types = s.get("underlyingSubType", [])
+        if underlying == "COIN" and not any(x in ("STOCK", "ETF", "EQUITY", "TRADFI", "COMMODITY") for x in sub_types):
+            allowed.add(s["symbol"])
+    return allowed if allowed else None
+
 async def get_universe(session, source):
     universe = []
     if source != "BYBIT":
+        allowed_set = await get_binance_crypto_set(session, source)
         tickers = await fetch_json(session, f"{source}/fapi/v1/ticker/24hr")
         premiums = await fetch_json(session, f"{source}/fapi/v1/premiumIndex")
         if isinstance(tickers, list) and isinstance(premiums, list):
             fund_map = {p["symbol"]: float(p.get("lastFundingRate", 0)) * 100 for p in premiums}
-            pairs = [t for t in tickers if is_valid_crypto(t["symbol"])]
+            pairs = [t for t in tickers if is_valid_crypto(t["symbol"], allowed_set)]
             pairs.sort(key=lambda x: float(x.get("quoteVolume", 0)), reverse=True)
             top = pairs[:TOP_N_COINS]
             top_names = {x["symbol"] for x in top}
@@ -134,6 +152,7 @@ async def scan_market():
 
 if __name__ == "__main__":
     asyncio.run(scan_market())
+
 
 
 
