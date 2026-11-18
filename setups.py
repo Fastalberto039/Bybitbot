@@ -43,11 +43,12 @@ def evaluate_all_9_setups(candles, oi_series, price, funding, retail_long, whale
     low_48h = min(l for _, _, l, _, _ in candles)
     avg_vol_20 = sum(v for _, _, _, _, v in candles[-21:-1]) / 20
     avg_vol_3 = sum(v for _, _, _, _, v in candles[-3:]) / 3
+    drop_from_high = (high_24h - price) / high_24h * 100 if high_24h else 0
     up_zone, dn_zone = check_heatmap_zones(candles, price)
-    if oi_chg_1h >= 5.0 and retail_short >= 60.0 and whale_long >= 55.0 and up_zone:
+    if price_chg_1h > 0.0 and oi_chg_1h >= 5.0 and retail_short >= 60.0 and whale_long >= 55.0 and funding <= 0.005 and drop_from_high < 15.0 and up_zone:
         u_p, u_d = up_zone
         hits.append(f"🟢 #1 Перекос+Карта ЛОНГ (цель {u_p}, {u_d}%)")
-    if oi_chg_1h >= 5.0 and retail_long >= 60.0 and whale_short >= 55.0 and dn_zone:
+    if price_chg_1h < 0.0 and oi_chg_1h >= 5.0 and retail_long >= 60.0 and whale_short >= 55.0 and funding >= 0.0 and dn_zone:
         d_p, d_d = dn_zone
         hits.append(f"🔴 #1 Перекос+Карта ШОРТ (цель {d_p}, {d_d}%)")
     if price_chg_1h >= 1.0 and oi_chg_1h >= 5.0 and funding < 0.0:
@@ -62,17 +63,17 @@ def evaluate_all_9_setups(candles, oi_series, price, funding, retail_long, whale
     lower_wick = min(o1, c1) - l1
     if price_chg_3h <= -2.5 and l1 <= low_24h * 1.002 and lower_wick > body1 * 1.5 and oi_chg_1h <= -3.0 and funding <= 0.005 and v1 >= avg_vol_20 * 2.2:
         hits.append("🟢 #5 Капитуляция лонгов (ЛОНГ со шпильки)")
-    drop_from_high = (high_24h - price) / high_24h * 100 if high_24h else 0
     if pump_24h >= 8.0 and 0.5 <= drop_from_high <= 4.5 and (oi_chg_1h <= -2.5 or oi_chg_3h <= -4.0) and avg_vol_3 < avg_vol_20 * 0.6 and retail_long >= 55.0:
         hits.append("🔴 #6 Сброс ОИ (ШОРТ на истощении пампа)")
     if h1 >= high_24h * 0.998 and oi_curr <= oi_max_24h * 0.985 and v1 < avg_vol_20 * 0.8 and funding > 0.005 and retail_long >= 56.0:
         hits.append("🔴 #7 Дивергенция ОИ (ШОРТ на ложном перехае)")
     drop_48h = (high_48h - low_48h) / high_48h * 100 if high_48h else 0
-    if drop_48h >= 6.0 and price < low_48h + (high_48h - low_48h) * 0.38 and price_chg_3h >= 2.0 and oi_chg_3h <= 0.5 and avg_vol_3 < avg_vol_20 and -0.02 <= funding <= 0.01:
+    if drop_48h >= 6.0 and price < low_48h + (high_48h - low_48h) * 0.38 and price_chg_3h >= 2.0 and oi_chg_1h <= 0.5 and oi_chg_3h <= 0.5 and avg_vol_3 < avg_vol_20 and -0.02 <= funding <= 0.01:
         hits.append("🔴 #8 Недобор ОИ (ШОРТ на пустом отскоке)")
     upper_wick = h1 - max(o1, c1)
     if price_chg_3h >= 5.0 and upper_wick > body1 * 1.3 and oi_chg_3h >= 6.0 and oi_chg_1h <= 0.5 and v1 >= avg_vol_20 * 2.5 and funding > 0.005 and retail_long >= 60.0:
         hits.append("🔴 #9 Капитуляция шортов (ШОРТ на кульминации)")
     return hits, price_chg_1h, oi_chg_1h, retail_long, whale_long
+
 
 
