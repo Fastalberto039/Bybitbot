@@ -1,12 +1,28 @@
-def calculate_vwap_metrics(candles_15m: list, curr_price: float):
+import math
+
+
+def calculate_vwap_bands(candles_15m: list, curr_price: float):
+    """Точный суточный VWAP + стандартное отклонение (Bands) + вкат по 15m."""
     if not candles_15m:
-        return 0.0, 0.0, False, False
-    cum_pv, cum_vol = 0.0, 0.0
+        return 0.0, 0.0, 0.0, False, False
+
+    cum_pv, cum_pv2, cum_vol = 0.0, 0.0, 0.0
     for _, h, l, c, v, *_ in candles_15m:
-        cum_pv += ((h + l + c) / 3.0) * v
+        tp = (h + l + c) / 3.0
+        cum_pv += tp * v
+        cum_pv2 += (tp * tp) * v
         cum_vol += v
-    vwap = cum_pv / cum_vol if cum_vol > 0 else curr_price
+
+    if cum_vol <= 0:
+        return curr_price, 0.0, 0.0, False, False
+
+    vwap = cum_pv / cum_vol
+    variance = max((cum_pv2 / cum_vol) - (vwap * vwap), 0.0)
+    std_dev = math.sqrt(variance)
+
     diff_pct = (curr_price - vwap) / vwap * 100 if vwap > 0 else 0.0
+    z_score = (curr_price - vwap) / std_dev if std_dev > 0 else 0.0
+
     back_dn, back_up = False, False
     if len(candles_15m) >= 2:
         prev_c15, curr_c15 = candles_15m[-2:]
@@ -14,7 +30,8 @@ def calculate_vwap_metrics(candles_15m: list, curr_price: float):
         _, curr_h, curr_l, curr_cl, *_ = curr_c15
         back_dn = (curr_cl < prev_cl) and (curr_cl < prev_h)
         back_up = (curr_cl > prev_cl) and (curr_cl > prev_l)
-    return round(vwap, 6), round(diff_pct, 2), back_dn, back_up
+
+    return round(vwap, 6), round(diff_pct, 2), round(z_score, 2), back_dn, back_up
 
 
 def calculate_poc_levels(candles: list, curr_price: float):
@@ -55,24 +72,24 @@ def evaluate_all_9_setups(candles, oi_series, price, funding, retail_long, whale
     drop_from_high = (high_24h - price) / high_24h * 100 if high_24h else 0
     pump_24h = (high_24h - low_24h) / low_24h * 100 if low_24h else 0
 
-    vwap_val, vwap_diff, back_dn, back_up = calculate_vwap_metrics(candles_15m or [], price)
+    vwap_val, vwap_diff, z_score, back_dn, back_up = calculate_vwap_bands(candles_15m or [], price)
     up_poc, dn_poc = calculate_poc_levels(candles, price)
 
-    bear_abs = (delta1 >= 12.0 and c1 <= o1) or (h1 - max(o1, c1) > abs(c1 - o1) * 1.5 and delta1 > 0)
-    bull_abs = (delta1 <= -12.0 and c1 >= o1) or (min(o1, c1) - l1 > abs(c1 - o1) * 1.5 and delta1 < 0)
+    bear_abs = (delta1 >= 10.0 and c1 <= o1) or (h1 - max(o1, c1) > abs(c1 - o1) * 1.4 and delta1 > 0)
+    bull_abs = (delta1 <= -10.0 and c1 >= o1) or (min(o1, c1) - l1 > abs(c1 - o1) * 1.4 and delta1 < 0)
 
-    # #1 Строгий VWAP под 50 монет: отрыв от 3.2% + вкат по 15m + цель POC + ОИ или поглощение + перекос толпы
-    if vwap_val > 0 and vwap_diff >= 3.2 and back_dn and dn_poc and (oi_chg_1h <= -1.0 or bear_abs) and retail_long >= 58.0:
-        heat = "сильная перегретость" if vwap_diff >= 5.0 else "перегретость"
+    # #1 Точный индикатор: VWAP Band (>= 2.0σ) + Absorption/ОИ + POC + Вкат 15m
+    if vwap_val > 0 and z_score >= 2.0 and vwap_diff >= 2.0 and back_dn and dn_poc and (bear_abs or oi_chg_1h <= -1.0) and retail_long >= 57.0:
+        heat = "экстремальная перегретость" if z_score >= 2.8 else "перегретость"
         poc_p, poc_d = dn_poc
         abs_t = " + поглощение" if bear_abs else ""
-        hits.append(f"🔴 #1 Вкат к VWAP ({heat} +{vwap_diff}%{abs_t}, цель POC {poc_p} (-{poc_d}%)) — лучше рассмотреть ШОРТ")
+        hits.append(f"🔴 #1 VWAP 2σ ({heat} +{vwap_diff}%, {z_score}σ{abs_t}, цель POC {poc_p} (-{poc_d}%)) — лучше рассмотреть ШОРТ")
 
-    if vwap_val > 0 and vwap_diff <= -3.2 and back_up and up_poc and (oi_chg_1h <= -1.0 or bull_abs) and retail_short >= 58.0:
-        heat = "сильная перепроданность" if vwap_diff <= -5.0 else "перепроданность"
+    if vwap_val > 0 and z_score <= -2.0 and vwap_diff <= -2.0 and back_up and up_poc and (bull_abs or oi_chg_1h <= -1.0) and retail_short >= 57.0:
+        heat = "экстремальная перепроданность" if z_score <= -2.8 else "перепроданность"
         poc_p, poc_d = up_poc
         abs_t = " + поглощение" if bull_abs else ""
-        hits.append(f"🟢 #1 Вкат к VWAP ({heat} {vwap_diff}%{abs_t}, цель POC {poc_p} (+{poc_d}%)) — лучше рассмотреть ЛОНГ")
+        hits.append(f"🟢 #1 VWAP 2σ ({heat} {vwap_diff}%, {z_score}σ{abs_t}, цель POC {poc_p} (+{poc_d}%)) — лучше рассмотреть ЛОНГ")
 
     # #2 Топливо для ЛОНГА
     if price_chg_1h >= 1.5 and oi_chg_1h >= 6.0 and funding <= -0.015 and up_poc:
@@ -99,6 +116,7 @@ def evaluate_all_9_setups(candles, oi_series, price, funding, retail_long, whale
         hits.append("🔴 #6 Капитуляция шортов на кульминации — лучше рассмотреть ШОРТ")
 
     return hits, price_chg_1h, oi_chg_1h, retail_long, whale_long, vwap_val, vwap_diff, up_poc, dn_poc
+
 
 
 
