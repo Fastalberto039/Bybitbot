@@ -124,8 +124,10 @@ def format_alert(item, hits, p_chg, oi_chg, rl, wl, vwap_val, vwap_diff, up_poc,
     src = "Binance Futures" if item["source"] != "BYBIT" else "Bybit Futures"
     has_l, has_s = any("ЛОНГ" in h for h in hits), any("ШОРТ" in h for h in hits)
     verdict = "🟢 <b>ИТОГ: Лучше рассмотреть ЛОНГ</b>" if (has_l and not has_s) else ("🔴 <b>ИТОГ: Лучше рассмотреть ШОРТ</b>" if (has_s and not has_l) else "⚖️ <b>ИТОГ: Противоречие</b>")
-    heat = "🔥 сильная перегретость" if vwap_diff >= 3.0 else ("⚠️ перегретость" if vwap_diff >= 1.5 else ("❄️ сильная перепроданность" if vwap_diff <= -3.0 else ("⚠️ перепроданность" if vwap_diff <= -1.5 else "у VWAP")))
-    pocs = ([f"⬆️ {up_poc[:1]} (+{up_poc[1:]}%)"] if up_poc else []) + ([f"⬇️ {dn_poc[:1]} (-{dn_poc[1:]}%)"] if dn_poc else [])
+    heat = "🔥 сильная перегретость" if vwap_diff >= 5.0 else ("⚠️ перегретость" if vwap_diff >= 3.2 else ("❄️ сильная перепроданность" if vwap_diff <= -5.0 else ("⚠️ перепроданность" if vwap_diff <= -3.2 else "у VWAP")))
+    up_p, up_d = up_poc if up_poc else (None, None)
+    dn_p, dn_d = dn_poc if dn_poc else (None, None)
+    pocs = ([f"⬆️ {up_p} (+{up_d}%)"] if up_p else []) + ([f"⬇️ {dn_p} (-{dn_d}%)"] if dn_p else [])
     sign = "+" if vwap_diff > 0 else ""
     lines = [
         f"⚡️ <b>СИГНАЛ: {item['symbol']} (1Ч)</b> | {src}", verdict,
@@ -141,7 +143,6 @@ def format_alert(item, hits, p_chg, oi_chg, rl, wl, vwap_val, vwap_diff, up_poc,
 
 async def scan_market():
     bot = Bot(token=BOT_TOKEN)
-    await bot.send_message(CHAT_ID, "✅ Тест пройден! Связь с Telegram работает.")
     async with aiohttp.ClientSession() as session:
         source = await get_active_source(session)
         universe = await get_universe(session, source)
@@ -158,6 +159,7 @@ async def scan_market():
 
 
 asyncio.run(scan_market())
+
 
 
 
