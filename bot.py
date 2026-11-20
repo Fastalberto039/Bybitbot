@@ -85,7 +85,12 @@ async def get_universe(session, source):
             extra = [x for x in pairs if x["symbol"] in WATCHLIST and x["symbol"] not in top_names]
             for item in top + extra:
                 sym = item["symbol"]
-                universe.append({"symbol": sym, "price": float(item["lastPrice"]), "funding": fund_map.get(sym, 0.0), "source": source})
+                universe.append({
+                    "symbol": sym,
+                    "price": float(item["lastPrice"]),
+                    "funding": fund_map.get(sym, 0.0),
+                    "source": source
+                })
             if universe:
                 return universe
     data = await fetch_bybit(session, "/v5/market/tickers", {"category": "linear"})
@@ -96,7 +101,12 @@ async def get_universe(session, source):
         top_names = {x["symbol"] for x in top}
         extra = [x for x in pairs if x["symbol"] in WATCHLIST and x["symbol"] not in top_names]
         for item in top + extra:
-            universe.append({"symbol": item["symbol"], "price": float(item["lastPrice"]), "funding": float(item.get("fundingRate", 0)) * 100, "source": "BYBIT"})
+            universe.append({
+                "symbol": item["symbol"],
+                "price": float(item["lastPrice"]),
+                "funding": float(item.get("fundingRate", 0)) * 100,
+                "source": "BYBIT"
+            })
     return universe
 
 
@@ -186,9 +196,8 @@ async def scan_market():
                 else:
                     heat_txt = "в норме у VWAP"
 
-                msg = [
-                    f"⚡️ **СИГНАЛ: {item['symbol']} (1Ч)** | _{src_label}_",
-                    verdict,
+                msg_lines = []
+
 
 
 
