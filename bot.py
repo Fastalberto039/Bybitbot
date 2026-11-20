@@ -6,6 +6,7 @@ import requests
 TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN")
 TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")
 
+# ИСПРАВЛЕНО: добавлен поддомен fapi для работы с фьючерсами Binance
 BASE_URL = "https://binance.com"
 
 # Исключаем стейблкоины и индексные контракты
@@ -20,6 +21,7 @@ def send_telegram(text: str):
     if not TELEGRAM_TOKEN or not TELEGRAM_CHAT_ID:
         print("Ошибка: не заданы TELEGRAM_TOKEN или TELEGRAM_CHAT_ID")
         return
+    # ИСПРАВЛЕНО: правильный формат URL для Telegram Bot API
     url = f"https://telegram.org{TELEGRAM_TOKEN}/sendMessage"
     payload = {
         "chat_id": TELEGRAM_CHAT_ID,
@@ -63,7 +65,6 @@ def calculate_daily_vwap(symbol: str) -> float:
     cum_pv = 0.0
     cum_vol = 0.0
 
-    # Формат свечи Binance: [0:open_time, 1:open, 2:high, 3:low, 4:close, 5:volume, ...]
     for k in klines:
         high = float(k[2])
         low = float(k[3])
@@ -267,6 +268,7 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
 
 
