@@ -6,14 +6,35 @@ import requests
 TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN")
 TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")
 
-# ИСПРАВЛЕНО: добавлен поддомен fapi для работы с фьючерсами Binance
-BASE_URL = "https://binance.com"
+# Список официальных зеркал Binance Futures (на случай блокировки US IP на GitHub Actions)
+BINANCE_MIRRORS = [
+    "https://binance.me",
+    "https://binance.com",
+    "https://binance.com",
+    "https://binance.com",
+    "https://binance.com",
+]
 
-# Исключаем стейблкоины и индексные контракты
 EXCLUDED_SYMBOLS = {
     "USDCUSDT", "BUSDUSDT", "TUSDUSDT", "USDPUSDT",
     "FDUSDUSDT", "BTCDOMUSDT", "DEFIUSDT"
 }
+
+
+def get_working_base_url() -> str:
+    """Находит рабочее зеркало Binance Futures, которое не отдает 451/403."""
+    for url in BINANCE_MIRRORS:
+        try:
+            r = requests.get(f"{url}/fapi/v1/ping", timeout=5)
+            if r.status_code == 200:
+                print(f"Используем зеркало: {url}")
+                return url
+        except Exception:
+            continue
+    return BINANCE_MIRRORS
+
+
+BASE_URL = get_working_base_url()
 
 
 def send_telegram(text: str):
@@ -21,7 +42,6 @@ def send_telegram(text: str):
     if not TELEGRAM_TOKEN or not TELEGRAM_CHAT_ID:
         print("Ошибка: не заданы TELEGRAM_TOKEN или TELEGRAM_CHAT_ID")
         return
-    # ИСПРАВЛЕНО: правильный формат URL для Telegram Bot API
     url = f"https://telegram.org{TELEGRAM_TOKEN}/sendMessage"
     payload = {
         "chat_id": TELEGRAM_CHAT_ID,
@@ -65,11 +85,12 @@ def calculate_daily_vwap(symbol: str) -> float:
     cum_pv = 0.0
     cum_vol = 0.0
 
+    # Формат свечи Binance: [0:open_time, 1:open, 2:high, 3:low, 4:close, 5:volume, ...]
     for k in klines:
-        high = float(k[2])
-        low = float(k[3])
-        close = float(k[4])
-        volume = float(k[5])
+        high = float(k)
+        low = float(k)
+        close = float(k)
+        volume = float(k)
         typical_price = (high + low + close) / 3.0
 
         cum_pv += typical_price * volume
@@ -89,10 +110,10 @@ def get_market_metrics(symbol: str) -> dict:
     klines_resp.raise_for_status()
     klines = klines_resp.json()
 
-    prev_high = float(klines[-2][2])
-    prev_close = float(klines[-2][4])
-    curr_high = float(klines[-1][2])
-    curr_close = float(klines[-1][4])
+    prev_high = float(klines[-2])
+    prev_close = float(klines[-2])
+    curr_high = float(klines[-1])
+    curr_close = float(klines[-1])
     price_change_pct = ((curr_close - prev_close) / prev_close) * 100
 
     # 2. Точный суточный VWAP по 15-минуткам
@@ -100,7 +121,7 @@ def get_market_metrics(symbol: str) -> dict:
     if vwap > 0:
         vwap_diff_pct = ((curr_close - vwap) / vwap) * 100
         price_str = f"{curr_close:.8f}".rstrip("0").rstrip(".")
-        decimals = len(price_str.split(".")[1]) if "." in price_str else 2
+        decimals = len(price_str.split(".")) if "." in price_str else 2
         vwap_rounded = round(vwap, max(decimals, 2))
     else:
         vwap_diff_pct = 0.0
@@ -176,45 +197,35 @@ def check_setups(m: dict) -> tuple:
     short_votes = 0
 
     # --- СЕТАПЫ В ЛОНГ ---
-
-    # #1 Набор в ЛОНГ выше VWAP
     if m["price_change"] >= 1.5 and m["oi_change"] >= 2.0 and 0 < m["vwap_diff"] < 3.5:
         triggered.append("🟢 #1 Набор в ЛОНГ выше VWAP (Цена↑ + ОИ↑)")
         long_votes += 1
 
-    # #2 Топливо для ЛОНГА
     if m["price_change"] >= 1.0 and m["oi_change"] >= 2.0 and m["funding"] < 0:
         triggered.append("🟢 #2 Топливо для ЛОНГА (Цена↑ + ОИ↑ + Фандинг<0)")
         long_votes += 1
 
-    # #3 Шорт-сквиз
     if m["price_change"] >= 2.0 and m["oi_change"] <= -1.5 and m["vwap_diff"] > 0:
         triggered.append("🟢 #3 Шорт-сквиз (Цена↑ + ОИ↓)")
         long_votes += 1
 
-    # #4 Киты в ЛОНГ против толпы
     if m["crowd_short"] >= 55.0 and m["whales_long"] >= 55.0:
         triggered.append("🟢 #4 Киты в ЛОНГ против толпы")
         long_votes += 1
 
     # --- СЕТАПЫ В ШОРТ ---
-
-    # #5 Набор в ШОРТ ниже VWAP
     if m["price_change"] <= -1.5 and m["oi_change"] >= 2.0 and m["vwap_diff"] < 0:
         triggered.append("🔴 #5 Набор в ШОРТ ниже VWAP (Цена↓ + ОИ↑)")
         short_votes += 1
 
-    # #6 Топливо для ШОРТА
     if m["price_change"] <= -1.0 and m["oi_change"] >= 2.0 and m["funding"] >= 0.02:
         triggered.append("🔴 #6 Топливо для ШОРТА (Цена↓ + ОИ↑ + Фандинг↑)")
         short_votes += 1
 
-    # #7 Дивергенция ОИ (ШОРТ на ложном перехае)
     if m["price_change"] >= 0.8 and m["oi_change"] < 0 and (m["false_breakout_high"] or m["crowd_long"] >= 65.0):
         triggered.append("🔴 #7 Дивергенция ОИ (ШОРТ на ложном перехае)")
         short_votes += 1
 
-    # #8 Перекупленность от VWAP + падение ОИ (откат вниз к среднему)
     if m["vwap_diff"] >= 3.5 and m["oi_change"] < 0:
         triggered.append("🔴 #8 Перегрев выше VWAP (Откат вниз к среднему)")
         short_votes += 1
@@ -268,6 +279,7 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
 
 
