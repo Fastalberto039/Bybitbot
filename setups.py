@@ -40,7 +40,7 @@ def calculate_poc_levels(candles: list, curr_price: float):
     for o, h, l, c, v, *_ in candles[:-2]:
         tp = (h + l + c) / 3.0
         dist_pct = abs(tp - curr_price) / curr_price * 100 if curr_price else 0
-        if 0.8 <= dist_pct <= 4.0:
+        if 0.8 <= dist_pct <= 4.5:
             if tp > curr_price and v > best_up_vol:
                 best_up_vol, above_poc = v, (round(tp, 6), round(dist_pct, 2))
             elif tp < curr_price and v > best_dn_vol:
@@ -78,20 +78,20 @@ def evaluate_all_9_setups(candles, oi_series, price, funding, retail_long, whale
     bear_abs = (delta1 >= 10.0 and c1 <= o1) or (h1 - max(o1, c1) > abs(c1 - o1) * 1.4 and delta1 > 0)
     bull_abs = (delta1 <= -10.0 and c1 >= o1) or (min(o1, c1) - l1 > abs(c1 - o1) * 1.4 and delta1 < 0)
 
-    # #1 Точный индикатор: VWAP Band (>= 2.0σ) + Absorption/ОИ + POC + Вкат 15m
-    if vwap_val > 0 and z_score >= 2.0 and vwap_diff >= 2.0 and back_dn and dn_poc and (bear_abs or oi_chg_1h <= -1.0) and retail_long >= 57.0:
+    # #1 VWAP 2σ + Вкат 15m + Обязательный POC + (Поглощение ИЛИ падение ОИ ИЛИ перекос толпы >= 56%)
+    if vwap_val > 0 and z_score >= 2.0 and vwap_diff >= 2.0 and back_dn and dn_poc and (bear_abs or oi_chg_1h <= -1.0 or retail_long >= 56.0):
         heat = "экстремальная перегретость" if z_score >= 2.8 else "перегретость"
         poc_p, poc_d = dn_poc
         abs_t = " + поглощение" if bear_abs else ""
         hits.append(f"🔴 #1 VWAP 2σ ({heat} +{vwap_diff}%, {z_score}σ{abs_t}, цель POC {poc_p} (-{poc_d}%)) — лучше рассмотреть ШОРТ")
 
-    if vwap_val > 0 and z_score <= -2.0 and vwap_diff <= -2.0 and back_up and up_poc and (bull_abs or oi_chg_1h <= -1.0) and retail_short >= 57.0:
+    if vwap_val > 0 and z_score <= -2.0 and vwap_diff <= -2.0 and back_up and up_poc and (bull_abs or oi_chg_1h <= -1.0 or retail_short >= 56.0):
         heat = "экстремальная перепроданность" if z_score <= -2.8 else "перепроданность"
         poc_p, poc_d = up_poc
         abs_t = " + поглощение" if bull_abs else ""
         hits.append(f"🟢 #1 VWAP 2σ ({heat} {vwap_diff}%, {z_score}σ{abs_t}, цель POC {poc_p} (+{poc_d}%)) — лучше рассмотреть ЛОНГ")
 
-    # #2 Топливо для ЛОНГА (исправлено: без символа < для Telegram HTML)
+    # #2 Топливо для ЛОНГА
     if price_chg_1h >= 1.5 and oi_chg_1h >= 6.0 and funding <= -0.015 and up_poc:
         poc_p, _ = up_poc
         hits.append(f"🟢 #2 Топливо для ЛОНГА (Цена↑ + ОИ↑ + Фандинг ниже 0, цель POC {poc_p}) — лучше рассмотреть ЛОНГ")
@@ -116,6 +116,7 @@ def evaluate_all_9_setups(candles, oi_series, price, funding, retail_long, whale
         hits.append("🔴 #6 Капитуляция шортов на кульминации — лучше рассмотреть ШОРТ")
 
     return hits, price_chg_1h, oi_chg_1h, retail_long, whale_long, vwap_val, vwap_diff, up_poc, dn_poc
+
 
 
 
