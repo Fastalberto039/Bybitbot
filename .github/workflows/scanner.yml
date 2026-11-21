@@ -1,10 +1,12 @@
-name: Bybit 1H Liquidity Scanner
+name: Bybit 15m Liquidity Scanner
 
 on:
   schedule:
-    - cron: '2 * * * *'
+    - cron: '*/15 * * * *'
   workflow_dispatch:
-  push:
+
+permissions:
+  contents: write
 
 jobs:
   run-scanner:
@@ -13,17 +15,25 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v4
 
-      - name: Setup Python
+      - name: Set up Python
         uses: actions/setup-python@v5
         with:
           python-version: '3.11'
 
       - name: Install dependencies
-        run: pip install -r requirements.txt
+        run: pip install aiohttp aiogram
 
       - name: Run scanner
         env:
           BOT_TOKEN: ${{ secrets.BOT_TOKEN }}
           CHAT_ID: ${{ secrets.CHAT_ID }}
         run: python bot.py
+
+      - name: Save signal cooldown cache
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@://github.com"
+          git add sent_cache.json || true
+          git diff --staged --quiet || (git commit -m "Update cache" && git push)
+
 
