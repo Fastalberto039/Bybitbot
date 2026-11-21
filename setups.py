@@ -91,10 +91,10 @@ def evaluate_all_9_setups(candles, oi_series, price, funding, retail_long, whale
         abs_t = " + поглощение" if bull_abs else ""
         hits.append(f"🟢 #1 VWAP 2σ ({heat} {vwap_diff}%, {z_score}σ{abs_t}, цель POC {poc_p} (+{poc_d}%)) — лучше рассмотреть ЛОНГ")
 
-    # #2 Топливо для ЛОНГА
+    # #2 Топливо для ЛОНГА (исправлено: без символа < для Telegram HTML)
     if price_chg_1h >= 1.5 and oi_chg_1h >= 6.0 and funding <= -0.015 and up_poc:
         poc_p, _ = up_poc
-        hits.append(f"🟢 #2 Топливо для ЛОНГА (Цена↑ + ОИ↑ + Фандинг<0, цель POC {poc_p}) — лучше рассмотреть ЛОНГ")
+        hits.append(f"🟢 #2 Топливо для ЛОНГА (Цена↑ + ОИ↑ + Фандинг ниже 0, цель POC {poc_p}) — лучше рассмотреть ЛОНГ")
 
     # #3 Контршорт от лимиток кита
     if price_chg_3h <= -4.0 and l1 <= low_24h * 1.002 and oi_chg_1h >= 5.0 and funding <= -0.025 and v1 >= avg_vol_20 * 2.2 and bull_abs:
@@ -116,6 +116,7 @@ def evaluate_all_9_setups(candles, oi_series, price, funding, retail_long, whale
         hits.append("🔴 #6 Капитуляция шортов на кульминации — лучше рассмотреть ШОРТ")
 
     return hits, price_chg_1h, oi_chg_1h, retail_long, whale_long, vwap_val, vwap_diff, up_poc, dn_poc
+
 
 
 
