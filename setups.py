@@ -40,7 +40,7 @@ def calculate_poc_levels(candles: list, curr_price: float):
     for o, h, l, c, v, *_ in candles[:-2]:
         tp = (h + l + c) / 3.0
         dist_pct = abs(tp - curr_price) / curr_price * 100 if curr_price else 0
-        if 0.8 <= dist_pct <= 4.5:
+        if 0.8 <= dist_pct <= 7.0:
             if tp > curr_price and v > best_up_vol:
                 best_up_vol, above_poc = v, (round(tp, 6), round(dist_pct, 2))
             elif tp < curr_price and v > best_dn_vol:
@@ -75,10 +75,14 @@ def evaluate_all_9_setups(candles, oi_series, price, funding, retail_long, whale
     vwap_val, vwap_diff, z_score, back_dn, back_up = calculate_vwap_bands(candles_15m or [], price)
     up_poc, dn_poc = calculate_poc_levels(candles, price)
 
-    bear_abs = (delta1 >= 10.0 and c1 <= o1) or (h1 - max(o1, c1) > abs(c1 - o1) * 1.4 and delta1 > 0)
-    bull_abs = (delta1 <= -10.0 and c1 >= o1) or (min(o1, c1) - l1 > abs(c1 - o1) * 1.4 and delta1 < 0)
+    body1 = abs(c1 - o1)
+    upper_wick = h1 - max(o1, c1)
+    lower_wick = min(o1, c1) - l1
 
-    # #1 VWAP 2σ + Вкат 15m + Обязательный POC + (Поглощение ИЛИ падение ОИ ИЛИ перекос толпы >= 56%)
+    bear_abs = (delta1 >= 10.0 and c1 <= o1) or (upper_wick > body1 * 1.4 and delta1 > 0)
+    bull_abs = (delta1 <= -10.0 and c1 >= o1) or (lower_wick > body1 * 1.4 and delta1 < 0)
+
+    # #1 VWAP 2σ + Вкат 15m + Обязательный POC
     if vwap_val > 0 and z_score >= 2.0 and vwap_diff >= 2.0 and back_dn and dn_poc and (bear_abs or oi_chg_1h <= -1.0 or retail_long >= 56.0):
         heat = "экстремальная перегретость" if z_score >= 2.8 else "перегретость"
         poc_p, poc_d = dn_poc
@@ -96,9 +100,12 @@ def evaluate_all_9_setups(candles, oi_series, price, funding, retail_long, whale
         poc_p, _ = up_poc
         hits.append(f"🟢 #2 Топливо для ЛОНГА (Цена↑ + ОИ↑ + Фандинг ниже 0, цель POC {poc_p}) — лучше рассмотреть ЛОНГ")
 
-    # #3 Контршорт от лимиток кита
-    if price_chg_3h <= -4.0 and l1 <= low_24h * 1.002 and oi_chg_1h >= 5.0 and funding <= -0.025 and v1 >= avg_vol_20 * 2.2 and bull_abs:
-        hits.append("🟢 #3 Контршорт от лимиток кита (поглощение продаж) — лучше рассмотреть ЛОНГ")
+    # #3 Выкуп пролива от суточного дна (ловит V-образные развороты на объёме как по BTC 55,100)
+    is_rebound = (c1 > o1) or (lower_wick > body1 * 1.2) or back_up
+    if price_chg_3h <= -3.0 and l1 <= low_24h * 1.004 and v1 >= avg_vol_20 * 1.6 and is_rebound:
+        poc_p, poc_d = up_poc if up_poc else (None, None)
+        poc_t = f", цель POC {poc_p} (+{poc_d}%)" if poc_p else ""
+        hits.append(f"🟢 #3 Выкуп пролива от дна (объём + откуп{poc_t}) — лучше рассмотреть ЛОНГ")
 
     # #4 Сброс ОИ на истощении пампа
     if pump_24h >= 9.0 and 1.0 <= drop_from_high <= 4.5 and oi_chg_1h <= -3.5 and avg_vol_3 < avg_vol_20 * 0.55 and retail_long >= 60.0 and dn_poc:
@@ -111,11 +118,11 @@ def evaluate_all_9_setups(candles, oi_series, price, funding, retail_long, whale
         hits.append(f"🔴 #5 Дивергенция ОИ / Поглощение на перехае (цель POC {poc_p}) — лучше рассмотреть ШОРТ")
 
     # #6 Капитуляция шортов на кульминации
-    body1, upper_wick = abs(c1 - o1), h1 - max(o1, c1)
     if price_chg_3h >= 6.0 and upper_wick > body1 * 1.5 and oi_chg_3h >= 7.0 and oi_chg_1h <= 0.0 and v1 >= avg_vol_20 * 2.8 and funding > 0.01 and retail_long >= 63.0:
         hits.append("🔴 #6 Капитуляция шортов на кульминации — лучше рассмотреть ШОРТ")
 
     return hits, price_chg_1h, oi_chg_1h, retail_long, whale_long, vwap_val, vwap_diff, up_poc, dn_poc
+
 
 
 
