@@ -6,7 +6,7 @@ from setups import evaluate_all_9_setups
 
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 CHAT_ID = os.getenv("CHAT_ID")
-TOP_N_COINS = 50
+TOP_N_COINS = 40
 COOLDOWN_SEC = 7200
 CACHE_FILE = "sent_cache.json"
 WATCHLIST = ["APTUSDT", "ARBUSDT", "OPUSDT", "DOTUSDT", "ATOMUSDT", "ZROUSDT", "ZKUSDT", "STRKUSDT"]
@@ -61,7 +61,7 @@ async def fetch_bybit(session, endpoint, params=None):
 
 
 async def get_universe(session, source):
-    universe = []
+    universe, seen = [], set()
     if source != "BYBIT":
         info = await fetch_json(session, f"{source}/fapi/v1/exchangeInfo")
         allowed = {
@@ -75,22 +75,32 @@ async def get_universe(session, source):
         )
         if isinstance(tickers, list) and isinstance(premiums, list):
             f_map = {p["symbol"]: float(p.get("lastFundingRate", 0)) * 100 for p in premiums}
-            pairs = sorted([t for t in tickers if is_valid_crypto(t["symbol"], allowed)], key=lambda x: float(x.get("quoteVolume", 0)), reverse=True)
-            top = pairs[:TOP_N_COINS]
-            names = {x["symbol"] for x in top}
-            for item in top + [x for x in pairs if x["symbol"] in WATCHLIST and x["symbol"] not in names]:
+            pairs = [t for t in tickers if is_valid_crypto(t["symbol"], allowed) and float(t.get("quoteVolume", 0)) >= 10_000_000]
+            by_vol = sorted(pairs, key=lambda x: float(x.get("quoteVolume", 0)), reverse=True)[:TOP_N_COINS]
+            by_mov = sorted(pairs, key=lambda x: abs(float(x.get("priceChangePercent", 0))), reverse=True)[:15]
+            by_fnd = sorted(pairs, key=lambda x: abs(f_map.get(x["symbol"], 0)), reverse=True)[:15]
+            extra = [x for x in pairs if x["symbol"] in WATCHLIST]
+            for item in by_vol + by_mov + by_fnd + extra:
                 sym = item["symbol"]
-                universe.append({"symbol": sym, "price": float(item["lastPrice"]), "funding": f_map.get(sym, 0.0), "source": source})
+                if sym not in seen:
+                    seen.add(sym)
+                    universe.append({"symbol": sym, "price": float(item["lastPrice"]), "funding": f_map.get(sym, 0.0), "source": source})
             if universe:
                 return universe
     data = await fetch_bybit(session, "/v5/market/tickers", {"category": "linear"})
     if data:
-        pairs = sorted([x for x in data["result"]["list"] if is_valid_crypto(x["symbol"])], key=lambda x: float(x.get("turnover24h", 0)), reverse=True)
-        top = pairs[:TOP_N_COINS]
-        names = {x["symbol"] for x in top}
-        for item in top + [x for x in pairs if x["symbol"] in WATCHLIST and x["symbol"] not in names]:
-            universe.append({"symbol": item["symbol"], "price": float(item["lastPrice"]), "funding": float(item.get("fundingRate", 0)) * 100, "source": "BYBIT"})
+        pairs = [x for x in data["result"]["list"] if is_valid_crypto(x["symbol"]) and float(x.get("turnover24h", 0)) >= 10_000_000]
+        by_vol = sorted(pairs, key=lambda x: float(x.get("turnover24h", 0)), reverse=True)[:TOP_N_COINS]
+        by_mov = sorted(pairs, key=lambda x: abs(float(x.get("price24hPcnt", 0))), reverse=True)[:15]
+        by_fnd = sorted(pairs, key=lambda x: abs(float(x.get("fundingRate", 0))), reverse=True)[:15]
+        extra = [x for x in pairs if x["symbol"] in WATCHLIST]
+        for item in by_vol + by_mov + by_fnd + extra:
+            sym = item["symbol"]
+            if sym not in seen:
+                seen.add(sym)
+                universe.append({"symbol": sym, "price": float(item["lastPrice"]), "funding": float(item.get("fundingRate", 0)) * 100, "source": "BYBIT"})
     return universe
+
 async def get_market_history(session, symbol, source):
     candles, c15, oi_s, rl, wl = [], [], [], 50.0, 50.0
     now = datetime.now(timezone.utc)
