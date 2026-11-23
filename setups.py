@@ -13,6 +13,49 @@ def fmt_usd(val: float) -> str:
     return f"{sign}{round(v, 0)}$"
 
 
+def calc_ema(values: list, period: int) -> float:
+    if not values:
+        return 0.0
+    k = 2.0 / (period + 1)
+    ema = values[0]
+    for v in values[1:]:
+        ema = v * k + ema * (1.0 - k)
+    return ema
+
+
+def analyze_15m_ema(candles_15m: list, curr_price: float):
+    if not candles_15m or len(candles_15m) < 30:
+        return ""
+    closes = [c for c in candles_15m]
+    vols = [c for c in candles_15m]
+    ema7 = calc_ema(closes[-35:], 7)
+    ema14 = calc_ema(closes[-45:], 14)
+    ema28 = calc_ema(closes[-60:], 28)
+    prev_ema28 = calc_ema(closes[-61:-1], 28)
+    prev_close = closes[-2]
+    avg_vol = sum(vols[-6:-1]) / 5.0 if len(vols) >= 6 else vols[-1]
+    last_vol = vols[-1]
+
+    ema_top = max(ema7, ema14, ema28)
+    ema_bot = min(ema7, ema14, ema28)
+    dist_from_28 = (curr_price - ema28) / ema28 * 100 if ema28 > 0 else 0.0
+    zone_l = f"{round(min(ema7, ema14), 6)}–{round(max(ema7, ema14), 6)}"
+
+    # Бычий старт и состояние на 15m
+    if curr_price > ema_top:
+        if (prev_close <= prev_ema28 * 1.003 or dist_from_28 <= 1.35) and last_vol >= avg_vol * 0.9:
+            return f"🚀 15m СТАРТ ЛОНГА: выход над пучком EMA7/14/28 (зона ретеста {zone_l}, отрыв +{round(dist_from_28, 2)}%)"
+        return f"⏳ 15m ЛОНГ уже в пути (+{round(dist_from_28, 2)}% от EMA28) — не догонять, ждать откат в зону EMA {zone_l}"
+
+    # Медвежий старт и состояние на 15m
+    if curr_price < ema_bot:
+        if (prev_close >= prev_ema28 * 0.997 or dist_from_28 >= -1.35) and last_vol >= avg_vol * 0.9:
+            return f"🔻 15m СТАРТ ШОРТА: пробой вниз под пучок EMA7/14/28 (зона ретеста {zone_l}, отрыв {round(dist_from_28, 2)}%)"
+        return f"⏳ 15m ШОРТ уже в пути ({round(dist_from_28, 2)}% от EMA28) — ждать откат к зоне EMA {zone_l}"
+
+    return f"🔄 15m СЖАТИЕ внутри пучка EMA7/14/28 ({round(ema_bot, 6)}–{round(ema_top, 6)}) — пружина сжимается, ждать выход"
+
+
 def calculate_vwap_bands(candles_15m: list, curr_price: float):
     if not candles_15m:
         return 0.0, 0.0, 0.0, False, False
@@ -28,13 +71,7 @@ def calculate_vwap_bands(candles_15m: list, curr_price: float):
     std_dev = math.sqrt(max((cum_pv2 / cum_vol) - (vwap * vwap), 0.0))
     diff_pct = (curr_price - vwap) / vwap * 100 if vwap > 0 else 0.0
     z_score = (curr_price - vwap) / std_dev if std_dev > 0 else 0.0
-    back_dn, back_up = False, False
-    if len(candles_15m) >= 2:
-        _, prev_h, prev_l, prev_cl, *_ = candles_15m[-2]
-        _, _, _, curr_cl, *_ = candles_15m[-1]
-        back_dn = (curr_cl < prev_cl) and (curr_cl < prev_h)
-        back_up = (curr_cl > prev_cl) and (curr_cl > prev_l)
-    return round(vwap, 6), round(diff_pct, 2), round(z_score, 2), back_dn, back_up
+    return round(vwap, 6), round(diff_pct, 2), round(z_score, 2), False, False
 
 
 def calculate_poc_levels(candles: list, curr_price: float):
@@ -56,73 +93,44 @@ def evaluate_all_9_setups(candles, oi_series, price, funding, retail_long, whale
     retail_short = 100.0 - retail_long
     last_c = candles[-1]
     o1, h1, l1, c1, v1 = last_c[:5]
-    tb1 = last_c[-1] if len(last_c) >= 6 else v1 * 0.5
-    delta1 = (2 * tb1 - v1) / v1 * 100 if v1 > 0 else 0.0
     o3 = next(iter(candles[-3]))
     price_chg_1h = (price - o1) / o1 * 100 if o1 else 0
     price_chg_3h = (price - o3) / o3 * 100 if o3 else 0
 
-    # Р    # Расчёт CVD (Дельта объёма за 4 часа)
-    cvd_4h_usd = sum(((2 * (c[-1] if len(c) >= 6 else c[4] * 0.5)) - c[4]) * c[3] for c in candles[-4:])
-    vol_4h_usd = sum(c[4] * c[3] for c in candles[-4:])
+    # Расчёт CVD за 4 часа
+    cvd_4h_usd = sum(((2 * (c[-1] if len(c) >= 6 else c * 0.5)) - c) * c for c in candles[-4:])
+    vol_4h_usd = sum(c * c for c in candles[-4:])
     cvd_pct = (cvd_4h_usd / vol_4h_usd * 100) if vol_4h_usd > 0 else 0.0
 
-
     # Расчёт Net Delta ND
-    oi_curr, oi_1h_ago, oi_3h_ago = oi_series[-1], oi_series[-2], oi_series[-4]
+    oi_curr, oi_1h_ago = oi_series[-1], oi_series[-2]
     oi_chg_1h = (oi_curr - oi_1h_ago) / oi_1h_ago * 100 if oi_1h_ago else 0
-    oi_chg_3h = (oi_curr - oi_3h_ago) / oi_3h_ago * 100 if oi_3h_ago else 0
-    oi_max_24h = max(oi_series)
     oi_usd = oi_curr if oi_curr > 100_000 else oi_curr * price
     nd_usd = oi_usd * ((whale_long - (100.0 - whale_long)) / 100.0)
 
     last_24 = candles[-24:]
-    high_24h = max(h for _, h, _, _, _, *_ in last_24)
     low_24h = min(l for _, _, l, _, _, *_ in last_24)
     avg_vol_20 = sum(v for _, _, _, _, v, *_ in candles[-21:-1]) / 20
-    avg_vol_3 = sum(v for _, _, _, _, v, *_ in candles[-3:]) / 3
-    drop_from_high = (high_24h - price) / high_24h * 100 if high_24h else 0
-    pump_24h = (high_24h - low_24h) / low_24h * 100 if low_24h else 0
+    body1, lower_wick = abs(c1 - o1), min(o1, c1) - l1
 
-    vwap_val, vwap_diff, z_score, back_dn, back_up = calculate_vwap_bands(candles_15m or [], price)
+    vwap_val, vwap_diff, _, _, _ = calculate_vwap_bands(candles_15m or [], price)
     up_poc, dn_poc = calculate_poc_levels(candles, price)
-    body1, upper_wick, lower_wick = abs(c1 - o1), h1 - max(o1, c1), min(o1, c1) - l1
-    bear_abs = (delta1 >= 10.0 and c1 <= o1) or (upper_wick > body1 * 1.4 and delta1 > 0)
-    bull_abs = (delta1 <= -10.0 and c1 >= o1) or (lower_wick > body1 * 1.4 and delta1 < 0)
-
-    # #2 Топливо для ЛОНГА
-    if price_chg_1h >= 1.5 and oi_chg_1h >= 6.0 and funding <= -0.015 and up_poc:
-        poc_p, _ = up_poc
-        hits.append(f"🟢 #2 Топливо для ЛОНГА (Цена↑ + ОИ↑ + Фандинг ниже 0, цель POC {poc_p}) — лучше рассмотреть ЛОНГ")
+    ema_15m_note = analyze_15m_ema(candles_15m or [], price)
 
     # #3 Выкуп пролива от суточного дна
-    if price_chg_3h <= -3.0 and l1 <= low_24h * 1.004 and v1 >= avg_vol_20 * 1.6 and ((c1 > o1) or (lower_wick > body1 * 1.2) or back_up):
+    if price_chg_3h <= -3.0 and l1 <= low_24h * 1.004 and v1 >= avg_vol_20 * 1.6 and ((c1 > o1) or (lower_wick > body1 * 1.2)):
         poc_p, poc_d = up_poc if up_poc else (None, None)
         poc_t = f", цель POC {poc_p} (+{poc_d}%)" if poc_p else ""
         hits.append(f"🟢 #3 Выкуп пролива от дна (объём + откуп{poc_t}) — лучше рассмотреть ЛОНГ")
 
-    # #4 Сброс ОИ на истощении пампа
-    if pump_24h >= 9.0 and 1.0 <= drop_from_high <= 4.5 and oi_chg_1h <= -3.5 and avg_vol_3 < avg_vol_20 * 0.55 and retail_long >= 60.0 and dn_poc:
-        poc_p, _ = dn_poc
-        hits.append(f"🔴 #4 Сброс ОИ на истощении пампа (цель POC {poc_p}) — лучше рассмотреть ШОРТ")
+    # #7 Чистые «Ножницы» (Толпа против Китов, без фандингового шума!)
+    if (retail_long >= 58.0 and whale_long <= 45.0) or (retail_long >= 65.0 and whale_long <= 48.0):
+        hits.append(f"🔴 #7 Перекос в ЛОНГ (Толпа {round(retail_long,1)}% в лонгах против Китов {round(100-whale_long,1)}% в шортах) — лучше рассмотреть ШОРТ")
 
-    # #5 Дивергенция ОИ + Поглощение на перехае
-    if h1 >= high_24h * 0.998 and oi_curr <= oi_max_24h * 0.98 and bear_abs and funding > 0.008 and retail_long >= 60.0 and dn_poc:
-        poc_p, _ = dn_poc
-        hits.append(f"🔴 #5 Дивергенция ОИ / Поглощение на перехае (цель POC {poc_p}) — лучше рассмотреть ШОРТ")
+    if (retail_short >= 58.0 and whale_long >= 55.0) or (retail_short >= 65.0 and whale_long >= 52.0):
+        hits.append(f"🟢 #7 Перекос в ШОРТ (Толпа {round(retail_short,1)}% в шортах против Китов {round(whale_long,1)}% в лонгах) — лучше рассмотреть ЛОНГ")
 
-    # #6 Капитуляция шортов на кульминации
-    if price_chg_3h >= 6.0 and upper_wick > body1 * 1.5 and oi_chg_3h >= 7.0 and oi_chg_1h <= 0.0 and v1 >= avg_vol_20 * 2.8 and funding > 0.01 and retail_long >= 63.0:
-        hits.append("🔴 #6 Капитуляция шортов на кульминации — лучше рассмотреть ШОРТ")
-
-    # #7 Сильные перекосы («Ножницы» толпа vs киты / экстремальный фандинг)
-    if retail_long >= 68.0 and (whale_long <= 52.0 or funding >= 0.04):
-        hits.append(f"🔴 #7 Перекос в ЛОНГ (Толпа {round(retail_long,1)}% в лонгах, фандинг {round(funding,3)}%) — перегрев покупателей, ШОРТ от сопротивления")
-
-    if (retail_short >= 66.0 and whale_long >= 50.0) or funding <= -0.15:
-        hits.append(f"🟢 #7 Перекос в ШОРТ / Фандинг (Толпа {round(retail_short,1)}% в шортах, фандинг {round(funding,3)}%) — топливо для сквиза, ЛОНГ при откупе")
-
-    # #8 Дивергенция CVD (Поглощение покупок/продаж против цены)
+    # #8 Дивергенция CVD (Скрытые продажи на росте или лимитный выкуп на падении)
     if price_chg_3h >= 2.5 and cvd_pct <= -6.0 and dn_poc:
         poc_p, poc_d = dn_poc
         hits.append(f"🔴 #8 Дивергенция CVD (Цена↑, но дельта {round(cvd_pct,1)}% — скрытые продажи, цель POC {poc_p} (-{poc_d}%)) — лучше рассмотреть ШОРТ")
@@ -131,7 +139,12 @@ def evaluate_all_9_setups(candles, oi_series, price, funding, retail_long, whale
         poc_p, poc_d = up_poc
         hits.append(f"🟢 #8 Дивергенция CVD (Цена↓, но дельта +{round(cvd_pct,1)}% — лимитный выкуп, цель POC {poc_p} (+{poc_d}%)) — лучше рассмотреть ЛОНГ")
 
+    # Если сработал хотя бы один сильный сетап — добавляем статус 15m пучка EMA7/14/28
+    if hits and ema_15m_note:
+        hits.append(ema_15m_note)
+
     return hits, price_chg_1h, oi_chg_1h, retail_long, whale_long, vwap_val, vwap_diff, up_poc, dn_poc, cvd_4h_usd, cvd_pct, nd_usd
+
 
 
 
