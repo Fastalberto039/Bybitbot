@@ -2,7 +2,7 @@ import os, json, time, asyncio
 from datetime import datetime, timezone
 import aiohttp
 from aiogram import Bot
-from setups import evaluate_all_9_setups
+from setups import evaluate_all_9_setups, fmt_usd
 
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 CHAT_ID = os.getenv("CHAT_ID")
@@ -100,7 +100,6 @@ async def get_universe(session, source):
                 seen.add(sym)
                 universe.append({"symbol": sym, "price": float(item["lastPrice"]), "funding": float(item.get("fundingRate", 0)) * 100, "source": "BYBIT"})
     return universe
-
 async def get_market_history(session, symbol, source):
     candles, c15, oi_s, rl, wl = [], [], [], 50.0, 50.0
     now = datetime.now(timezone.utc)
@@ -142,24 +141,70 @@ async def get_market_history(session, symbol, source):
     return None, None, None, 50.0, 50.0
 
 
-def format_alert(item, hits, p_chg, oi_chg, rl, wl, vwap_val, vwap_diff, up_poc, dn_poc):
+def explain_context(p_chg, oi_chg, rl, wl, cvd_usd, nd_usd, funding):
+    rs = 100.0 - rl
+    if rl >= 62.0:
+        crowd_txt = f"{round(rl,1)}% ЛОНГ (перегруз лонгов — люди верят в рост)"
+    elif rs >= 62.0:
+        crowd_txt = f"{round(rs,1)}% ШОРТ (толпа паникует и шортит — топливо для сквиза)"
+    else:
+        crowd_txt = f"{round(rl,1)}% ЛОНГ / {round(rs,1)}% ШОРТ (баланс)"
+    whale_txt = f"{round(wl,1)}% ЛОНГ" if wl >= 54.0 else (f"{round(100-wl,1)}% ШОРТ" if wl <= 46.0 else "50/50 нейтрально")
+    if p_chg > 0.3 and cvd_usd > 0:
+        cvd_txt = f"{fmt_usd(cvd_usd)} → Цена↑ + CVD↑ (рост на покупках)"
+    elif p_chg > 0.3 and cvd_usd < 0:
+        cvd_txt = f"{fmt_usd(cvd_usd)} → ⚠️ Цена↑ + CVD↓ (скрытые продажи в рост!)"
+    elif p_chg < -0.3 and cvd_usd < 0:
+        cvd_txt = f"{fmt_usd(cvd_usd)} → Цена↓ + CVD↓ (продавцы давят)"
+    elif p_chg < -0.3 and cvd_usd > 0:
+        cvd_txt = f"{fmt_usd(cvd_usd)} → 💡 Цена↓ + CVD↑ (поглощение продаж / откуп)"
+    else:
+        cvd_txt = f"{fmt_usd(cvd_usd)} (нейтральная дельта)"
+    if nd_usd < 0:
+        if p_chg > 0 and oi_chg > 0:
+            nd_txt = f"{fmt_usd(nd_usd)} (ND ниже 0: Цена↑ + ОИ↑ → шорты лезут против тренда, топливо для выноса вверх)"
+        elif p_chg < 0 and funding <= -0.15 and oi_chg > 0:
+            nd_txt = f"{fmt_usd(nd_usd)} (ND ниже 0: Цена↓ + Фандинг- + ОИ↑ → перегрев шортов, риск резкого отскока)"
+        else:
+            nd_txt = f"{fmt_usd(nd_usd)} (ND ниже 0 — доминируют шорты)"
+    else:
+        if p_chg < 0 and rl >= 62.0:
+            nd_txt = f"{fmt_usd(nd_usd)} (ND выше 0: Цена↓ + толпа в лонгах → ловят ножи, без объёма не лезть)"
+        else:
+            nd_txt = f"{fmt_usd(nd_usd)} (ND выше 0 — доминируют лонги)"
+    return crowd_txt, whale_txt, cvd_txt, nd_txt
+
+
+def format_alert(item, hits, p_chg, oi_chg, rl, wl, vwap_val, vwap_diff, up_poc, dn_poc, cvd_usd, cvd_pct, nd_usd, candles):
     src = "Binance Futures" if item["source"] != "BYBIT" else "Bybit Futures"
-    has_l, has_s = any("ЛОНГ" in h for h in hits), any("ШОРТ" in h for h in hits)
-    verdict = "🟢 <b>ИТОГ: Лучше рассмотреть ЛОНГ</b>" if (has_l and not has_s) else ("🔴 <b>ИТОГ: Лучше рассмотреть ШОРТ</b>" if (has_s and not has_l) else "⚖️ <b>ИТОГ: Противоречие</b>")
-    heat = "🔥 экстремальная перегретость" if vwap_diff >= 3.5 else ("⚠️ перегретость" if vwap_diff >= 2.0 else ("❄️ экстремальная перепроданность" if vwap_diff <= -3.5 else ("⚠️ перепроданность" if vwap_diff <= -2.0 else "у VWAP")))
+    has_l = any("рассмотреть ЛОНГ" in h or "ЛОНГ при откупе" in h for h in hits)
+    has_s = any("рассмотреть ШОРТ" in h or "ШОРТ от сопротивления" in h for h in hits)
+    verdict = "🟢 <b>ИТОГ: Лучше рассмотреть ЛОНГ</b>" if (has_l and not has_s) else ("🔴 <b>ИТОГ: Лучше рассмотреть ШОРТ</b>" if (has_s and not has_l) else "⚖️ <b>ИТОГ: Смешанный сигнал (ждать подтверждения на 15m)</b>")
     up_p, up_d = up_poc if up_poc else (None, None)
     dn_p, dn_d = dn_poc if dn_poc else (None, None)
     pocs = ([f"⬆️ {up_p} (+{up_d}%)"] if up_p else []) + ([f"⬇️ {dn_p} (-{dn_d}%)"] if dn_p else [])
-    sign = "+" if vwap_diff > 0 else ""
+    oi_sign = "+" if oi_chg > 0 else ""
+    oi_note = "растёт, набор позиций = топливо" if oi_chg >= 0.5 else ("падает, закрытие позиций / выдыхание" if oi_chg <= -0.5 else "стоит на месте")
+    h24 = max(h for _, h, _, _, _, *_ in candles[-24:])
+    l24 = min(l for _, _, l, _, _, *_ in candles[-24:])
+    liq_short_25x = round(l24 * 1.04, 6)
+    liq_long_25x = round(h24 * 0.96, 6)
+    cg_url = f"https://coinglass.com_{item['symbol']}"
+    crowd_txt, whale_txt, cvd_txt, nd_txt = explain_context(p_chg, oi_chg, rl, wl, cvd_usd, nd_usd, item["funding"])
     lines = [
         f"⚡️ <b>СИГНАЛ: {item['symbol']} (15m/1Ч)</b> | {src}", verdict,
         f"💰 <b>Цена:</b> {item['price']} ({round(p_chg, 2)}% за 1ч)",
-        f"⚖️ <b>VWAP:</b> {vwap_val} ({sign}{vwap_diff}% — {heat})",
         f"🎯 <b>Цели POC:</b> {' | '.join(pocs) if pocs else 'нет близких'}",
-        f"📈 <b>ОИ:</b> {round(oi_chg, 2)}% | 💸 <b>Фандинг:</b> {round(item['funding'], 4)}%",
-        f"👥 <b>Толпа:</b> {round(rl, 1)}%/{round(100-rl, 1)}% | 🐋 <b>Киты:</b> {round(wl, 1)}%/{round(100-wl, 1)}%",
+        f"📈 <b>ОИ:</b> {oi_sign}{round(oi_chg, 2)}% ({oi_note}) | 💸 <b>Фандинг:</b> {round(item['funding'], 4)}%",
+        f"💥 <b>Зоны ликвидаций (25x):</b> шортов выше <code>{liq_short_25x}</code> | лонгов ниже <code>{liq_long_25x}</code>",
+        f"👥 <b>Толпа (люди):</b> {crowd_txt}",
+        f"🐋 <b>Киты (деньги):</b> {whale_txt}",
+        f"📊 <b>CVD (4ч):</b> {cvd_txt}",
+        f"⚖️ <b>Net Delta:</b> {nd_txt}",
         "", "<b>Сработавшие сетапы:</b>"
-    ] + [f"• {h.replace('<', 'ниже ')}" for h in hits]
+    ] + [f"• {h.replace('<', 'ниже ')}" for h in hits] + [
+        "", f"🔎 <a href='{cg_url}'>Сверить ОИ, Ликвидации и Тепловую карту {item['symbol']} на CoinGlass</a>"
+    ]
     return "\n".join(lines)
 
 
@@ -171,9 +216,9 @@ async def process_symbol(sem, session, bot, item, cache, lock):
         candles, c15, oi_s, rl, wl = await get_market_history(session, sym, item["source"])
         if not candles or not oi_s:
             return
-        hits, p_chg, oi_chg, rl, wl, vwap_val, vwap_diff, up_poc, dn_poc = evaluate_all_9_setups(candles, oi_s, item["price"], item["funding"], rl, wl, c15)
+        hits, p_chg, oi_chg, rl, wl, vwap_val, vwap_diff, up_poc, dn_poc, cvd_usd, cvd_pct, nd_usd = evaluate_all_9_setups(candles, oi_s, item["price"], item["funding"], rl, wl, c15)
         if hits:
-            await bot.send_message(CHAT_ID, format_alert(item, hits, p_chg, oi_chg, rl, wl, vwap_val, vwap_diff, up_poc, dn_poc), parse_mode="HTML")
+            await bot.send_message(CHAT_ID, format_alert(item, hits, p_chg, oi_chg, rl, wl, vwap_val, vwap_diff, up_poc, dn_poc, cvd_usd, cvd_pct, nd_usd, candles), parse_mode="HTML", disable_web_page_preview=True)
             async with lock:
                 cache[sym] = time.time()
 
@@ -192,6 +237,7 @@ async def scan_market():
 
 
 asyncio.run(scan_market())
+
 
 
 
