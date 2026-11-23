@@ -17,17 +17,17 @@ def calc_ema(values: list, period: int) -> float:
     if not values:
         return 0.0
     k = 2.0 / (period + 1)
-    ema = values[0]
+    ema = float(next(iter(values)))
     for v in values[1:]:
-        ema = v * k + ema * (1.0 - k)
+        ema = float(v) * k + ema * (1.0 - k)
     return ema
 
 
-def analyze_15m_ema(candles_15m: list, curr_price: float):
+def analyze_15m_ema(candles_15m: list, curr_price: float) -> str:
     if not candles_15m or len(candles_15m) < 30:
         return ""
-    closes = [c for c in candles_15m]
-    vols = [c for c in candles_15m]
+    closes = [float(cl) for _, _, _, cl, *_ in candles_15m]
+    vols = [float(v) for _, _, _, _, v, *_ in candles_15m]
     ema7 = calc_ema(closes[-35:], 7)
     ema14 = calc_ema(closes[-45:], 14)
     ema28 = calc_ema(closes[-60:], 28)
@@ -41,13 +41,11 @@ def analyze_15m_ema(candles_15m: list, curr_price: float):
     dist_from_28 = (curr_price - ema28) / ema28 * 100 if ema28 > 0 else 0.0
     zone_l = f"{round(min(ema7, ema14), 6)}–{round(max(ema7, ema14), 6)}"
 
-    # Бычий старт и состояние на 15m
     if curr_price > ema_top:
         if (prev_close <= prev_ema28 * 1.003 or dist_from_28 <= 1.35) and last_vol >= avg_vol * 0.9:
             return f"🚀 15m СТАРТ ЛОНГА: выход над пучком EMA7/14/28 (зона ретеста {zone_l}, отрыв +{round(dist_from_28, 2)}%)"
         return f"⏳ 15m ЛОНГ уже в пути (+{round(dist_from_28, 2)}% от EMA28) — не догонять, ждать откат в зону EMA {zone_l}"
 
-    # Медвежий старт и состояние на 15m
     if curr_price < ema_bot:
         if (prev_close >= prev_ema28 * 0.997 or dist_from_28 >= -1.35) and last_vol >= avg_vol * 0.9:
             return f"🔻 15m СТАРТ ШОРТА: пробой вниз под пучок EMA7/14/28 (зона ретеста {zone_l}, отрыв {round(dist_from_28, 2)}%)"
@@ -93,16 +91,19 @@ def evaluate_all_9_setups(candles, oi_series, price, funding, retail_long, whale
     retail_short = 100.0 - retail_long
     last_c = candles[-1]
     o1, h1, l1, c1, v1 = last_c[:5]
-    o3 = next(iter(candles[-3]))
+    o3 = float(next(iter(candles[-3])))
     price_chg_1h = (price - o1) / o1 * 100 if o1 else 0
     price_chg_3h = (price - o3) / o3 * 100 if o3 else 0
 
-    # Расчёт CVD за 4 часа
-    cvd_4h_usd = sum(((2 * (c[-1] if len(c) >= 6 else c * 0.5)) - c) * c for c in candles[-4:])
-    vol_4h_usd = sum(c * c for c in candles[-4:])
+    cvd_4h_usd = 0.0
+    vol_4h_usd = 0.0
+    for item_c in candles[-4:]:
+        _, _, _, cl_i, vol_i = item_c[:5]
+        tb_i = float(item_c[-1]) if len(item_c) >= 6 else float(vol_i) * 0.5
+        cvd_4h_usd += ((2.0 * tb_i) - float(vol_i)) * float(cl_i)
+        vol_4h_usd += float(vol_i) * float(cl_i)
     cvd_pct = (cvd_4h_usd / vol_4h_usd * 100) if vol_4h_usd > 0 else 0.0
 
-    # Расчёт Net Delta ND
     oi_curr, oi_1h_ago = oi_series[-1], oi_series[-2]
     oi_chg_1h = (oi_curr - oi_1h_ago) / oi_1h_ago * 100 if oi_1h_ago else 0
     oi_usd = oi_curr if oi_curr > 100_000 else oi_curr * price
@@ -123,7 +124,7 @@ def evaluate_all_9_setups(candles, oi_series, price, funding, retail_long, whale
         poc_t = f", цель POC {poc_p} (+{poc_d}%)" if poc_p else ""
         hits.append(f"🟢 #3 Выкуп пролива от дна (объём + откуп{poc_t}) — лучше рассмотреть ЛОНГ")
 
-    # #7 Чистые «Ножницы» (Толпа против Китов, без фандингового шума!)
+    # #7 Чистые «Ножницы» (Толпа против Китов, без фандингового шума)
     if (retail_long >= 58.0 and whale_long <= 45.0) or (retail_long >= 65.0 and whale_long <= 48.0):
         hits.append(f"🔴 #7 Перекос в ЛОНГ (Толпа {round(retail_long,1)}% в лонгах против Китов {round(100-whale_long,1)}% в шортах) — лучше рассмотреть ШОРТ")
 
@@ -139,11 +140,11 @@ def evaluate_all_9_setups(candles, oi_series, price, funding, retail_long, whale
         poc_p, poc_d = up_poc
         hits.append(f"🟢 #8 Дивергенция CVD (Цена↓, но дельта +{round(cvd_pct,1)}% — лимитный выкуп, цель POC {poc_p} (+{poc_d}%)) — лучше рассмотреть ЛОНГ")
 
-    # Если сработал хотя бы один сильный сетап — добавляем статус 15m пучка EMA7/14/28
     if hits and ema_15m_note:
         hits.append(ema_15m_note)
 
     return hits, price_chg_1h, oi_chg_1h, retail_long, whale_long, vwap_val, vwap_diff, up_poc, dn_poc, cvd_4h_usd, cvd_pct, nd_usd
+
 
 
 
