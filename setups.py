@@ -62,10 +62,11 @@ def evaluate_all_9_setups(candles, oi_series, price, funding, retail_long, whale
     price_chg_1h = (price - o1) / o1 * 100 if o1 else 0
     price_chg_3h = (price - o3) / o3 * 100 if o3 else 0
 
-    # Расчёт CVD (Дельта объёма за 4 часа)
-    cvd_4h_usd = sum(((2 * (c[-1] if len(c) >= 6 else c * 0.5)) - c) * c for c in candles[-4:])
-    vol_4h_usd = sum(c * c for c in candles[-4:])
+    # Р    # Расчёт CVD (Дельта объёма за 4 часа)
+    cvd_4h_usd = sum(((2 * (c[-1] if len(c) >= 6 else c[4] * 0.5)) - c[4]) * c[3] for c in candles[-4:])
+    vol_4h_usd = sum(c[4] * c[3] for c in candles[-4:])
     cvd_pct = (cvd_4h_usd / vol_4h_usd * 100) if vol_4h_usd > 0 else 0.0
+
 
     # Расчёт Net Delta ND
     oi_curr, oi_1h_ago, oi_3h_ago = oi_series[-1], oi_series[-2], oi_series[-4]
