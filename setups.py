@@ -23,7 +23,7 @@ def calc_ema(values: list, period: int) -> float:
     return ema
 
 
-def analyze_15m_ema(candles_15m: list, curr_price: float, oi_chg_1h: float, retail_long: float, whale_long: float, cvd_4h_usd: float):
+def analyze_15m_ema(candles_15m: list, curr_price: float, oi_chg_1h: float, trend_dir: str, cvd_4h_usd: float):
     if not candles_15m or len(candles_15m) < 32:
         return "", None, None
     closes = [float(cl) for _, _, _, cl, *_ in candles_15m]
@@ -33,75 +33,48 @@ def analyze_15m_ema(candles_15m: list, curr_price: float, oi_chg_1h: float, reta
     ema14 = calc_ema(closes[-45:], 14)
     ema28 = calc_ema(closes[-60:], 28)
 
-    prev_ema7 = calc_ema(closes[-36:-1], 7)
-    prev_ema14 = calc_ema(closes[-46:-1], 14)
-    prev_ema28 = calc_ema(closes[-61:-1], 28)
-
     prev_close = closes[-2]
     avg_vol = sum(vols[-6:-1]) / 5.0 if len(vols) >= 6 else vols[-1]
     last_vol = vols[-1]
-    max_recent_vol = max(last_vol, vols[-2]) if len(vols) >= 2 else last_vol
 
     ema_top = max(ema7, ema14, ema28)
     ema_bot = min(ema7, ema14, ema28)
-    prev_top = max(prev_ema7, prev_ema14, prev_ema28)
-    prev_bot = min(prev_ema7, prev_ema14, prev_ema28)
-
     spread_now = (ema_top - ema_bot) / ema_bot * 100 if ema_bot > 0 else 99.0
-    spread_prev = (prev_top - prev_bot) / prev_bot * 100 if prev_bot > 0 else 99.0
     dist_from_28 = (curr_price - ema28) / ema28 * 100 if ema28 > 0 else 0.0
     zone_l = f"{round(ema_bot, 6)}–{round(ema_top, 6)}"
     ema_bounds = (ema_bot, ema_top)
-
-    retail_short = 100.0 - retail_long
-    whale_short = 100.0 - whale_long
     oi_sign = "+" if oi_chg_1h > 0 else ""
 
     squeeze_signal = None
-    long_ready = (retail_short >= 56.0 and whale_long >= 55.0) and (curr_price >= ema_bot * 0.997) and (oi_chg_1h >= 0.1)
-    short_ready = (retail_long >= 56.0 and whale_short >= 55.0) and (curr_price <= ema_top * 1.003) and (cvd_4h_usd < 0)
+    # Сжатие 15m EMA работает ТОЛЬКО по направлению старшего тренда!
+    if spread_now <= 0.75:
+        if trend_dir == "UP" and curr_price >= ema_bot * 0.998 and oi_chg_1h >= 0.3 and cvd_4h_usd > 0:
+            squeeze_signal = f"🪢 #9 СБЛИЖЕНИЕ EMA ПО ТРЕНДУ ВВЕРХ (рассмотреть ЛОНГ, зона {zone_l}, ширина {round(spread_now, 2)}%) | ОИ {oi_sign}{round(oi_chg_1h, 2)}% | CVD↑"
+        elif trend_dir == "DOWN" and curr_price <= ema_top * 1.002 and cvd_4h_usd < 0:
+            squeeze_signal = f"🪢 #9 СБЛИЖЕНИЕ EMA ПО ТРЕНДУ ВНИЗ (рассмотреть ШОРТ, зона {zone_l}, ширина {round(spread_now, 2)}%) | ОИ {oi_sign}{round(oi_chg_1h, 2)}% | CVD↓"
 
-    if (spread_now <= 0.85 or spread_prev <= 0.85) and (long_ready or short_ready):
-        whale_side = f"{round(whale_long,1)}% ЛОНГ" if whale_long >= 50 else f"{round(whale_short,1)}% ШОРТ"
-        retail_side = f"{round(retail_long,1)}% ЛОНГ" if retail_long >= 50 else f"{round(retail_short,1)}% ШОРТ"
-        pos_hint = "рассмотреть ЛОНГ (узел + ОИ↑)" if long_ready else "рассмотреть ШОРТ (узел + слив лонгов/CVD↓)"
-        squeeze_signal = (
-            f"🪢 #9 СБЛИЖЕНИЕ EMA7/14/28 ({pos_hint}, зона {zone_l}, ширина {round(spread_now, 2)}%) | "
-            f"Киты {whale_side} vs Толпа {retail_side} | ОИ {oi_sign}{round(oi_chg_1h, 2)}%"
-        )
+    # Модель Б: Первый откат к EMA14 по старшему тренду после импульса
+    pullback_signal = None
+    if trend_dir == "UP" and ema7 > ema14 > ema28 and abs(curr_price - ema14) / ema14 * 100 <= 0.35 and last_vol < avg_vol and cvd_4h_usd > 0 and oi_chg_1h >= 0.2:
+        pullback_signal = f"🎯 #11 ОТКАТ ПО ТРЕНДУ НА 15m EMA14 ({round(ema14, 6)}) — лучше рассмотреть ЛОНГ (ОИ {oi_sign}{round(oi_chg_1h, 2)}%, CVD↑)"
+    elif trend_dir == "DOWN" and ema7 < ema14 < ema28 and abs(curr_price - ema14) / ema14 * 100 <= 0.35 and last_vol < avg_vol and cvd_4h_usd < 0:
+        pullback_signal = f"🎯 #11 ОТКАТ ПО ТРЕНДУ ПОД 15m EMA14 ({round(ema14, 6)}) — лучше рассмотреть ШОРТ (ОИ {oi_sign}{round(oi_chg_1h, 2)}%, CVD↓)"
+
+    if pullback_signal:
+        squeeze_signal = pullback_signal
 
     if curr_price > ema_top:
-        if (prev_close <= prev_ema28 * 1.003 or dist_from_28 <= 1.35) and max_recent_vol >= avg_vol * 0.85:
-            note = f"🚀 15m СТАРТ ЛОНГА: выход над пучком EMA7/14/28 (зона {zone_l}, +{round(dist_from_28, 2)}%)"
-        else:
-            note = f"⏳ 15m ЛОНГ уже в пути (+{round(dist_from_28, 2)}% от EMA28) — не догонять, ждать ретест EMA {zone_l}"
+        note = f"🚀 15m выше пучка EMA ({zone_l}, +{round(dist_from_28, 2)}%)"
     elif curr_price < ema_bot:
-        if (prev_close >= prev_ema28 * 0.997 or dist_from_28 >= -1.35) and max_recent_vol >= avg_vol * 0.85:
-            note = f"🔻 15m СТАРТ ШОРТА: пробой вниз под пучок EMA7/14/28 (зона {zone_l}, {round(dist_from_28, 2)}%)"
-        else:
-            note = f"⏳ 15m ШОРТ уже в пути ({round(dist_from_28, 2)}% от EMA28) — ждать откат к зоне EMA {zone_l}"
+        note = f"🔻 15m ниже пучка EMA ({zone_l}, {round(dist_from_28, 2)}%)"
     else:
-        note = f"🔄 15m СЖАТИЕ внутри пучка EMA7/14/28 ({zone_l}) — пружина сжимается, ждать выход"
+        note = f"🔄 15m внутри пучка EMA ({zone_l})"
 
     return note, squeeze_signal, ema_bounds
 
 
 def calculate_vwap_bands(candles_15m: list, curr_price: float):
-    if not candles_15m:
-        return 0.0, 0.0, 0.0, False, False
-    cum_pv, cum_pv2, cum_vol = 0.0, 0.0, 0.0
-    for _, h, l, c, v, *_ in candles_15m:
-        tp = (h + l + c) / 3.0
-        cum_pv += tp * v
-        cum_pv2 += (tp * tp) * v
-        cum_vol += v
-    if cum_vol <= 0:
-        return curr_price, 0.0, 0.0, False, False
-    vwap = cum_pv / cum_vol
-    std_dev = math.sqrt(max((cum_pv2 / cum_vol) - (vwap * vwap), 0.0))
-    diff_pct = (curr_price - vwap) / vwap * 100 if vwap > 0 else 0.0
-    z_score = (curr_price - vwap) / std_dev if std_dev > 0 else 0.0
-    return round(vwap, 6), round(diff_pct, 2), round(z_score, 2), False, False
+    return curr_price, 0.0, 0.0, False, False
 
 
 def calculate_poc_levels(candles: list, curr_price: float):
@@ -110,7 +83,7 @@ def calculate_poc_levels(candles: list, curr_price: float):
     for o, h, l, c, v, *_ in candles[:-2]:
         tp = (h + l + c) / 3.0
         dist_pct = abs(tp - curr_price) / curr_price * 100 if curr_price else 0
-        if 1.0 <= dist_pct <= 7.0:
+        if 1.2 <= dist_pct <= 7.0:
             if tp > curr_price and v > best_up_vol:
                 best_up_vol, above_poc = v, (round(tp, 6), round(dist_pct, 2))
             elif tp < curr_price and v > best_dn_vol:
@@ -120,14 +93,24 @@ def calculate_poc_levels(candles: list, curr_price: float):
 
 def evaluate_all_9_setups(candles, oi_series, price, funding, retail_long, whale_long, candles_15m=None):
     hits = []
-    if abs(funding) >= 0.09:
+    if abs(funding) >= 0.08 or len(candles) < 36:
         return hits, 0.0, 0.0, retail_long, whale_long, price, 0.0, None, None, 0.0, 0.0, 0.0, None
 
-    retail_short = 100.0 - retail_long
-    whale_short = 100.0 - whale_long
+    # Определяем СТАРШИЙ ТРЕНД по 1Ч свечам (EMA28 и EMA48 — аналог 4Ч структуры)
+    closes_1h = [float(c[3]) for c in candles]
+    ema28_1h = calc_ema(closes_1h[-40:], 28)
+    ema48_1h = calc_ema(closes_1h, 48)
+    if price > ema28_1h and ema28_1h > ema48_1h:
+        trend_dir = "UP"
+    elif price < ema28_1h and ema28_1h < ema48_1h:
+        trend_dir = "DOWN"
+    else:
+        # В пиле без тренда на старшем ТФ вообще не входим!
+        return hits, 0.0, 0.0, retail_long, whale_long, price, 0.0, None, None, 0.0, 0.0, 0.0, None
+
     last_c = candles[-1]
-    o1, _, _, _, _ = last_c[:5]
-    o3 = float(next(iter(candles[-3])))
+    o1 = float(last_c[0])
+    o3 = float(candles[-3][0])
     price_chg_1h = (price - o1) / o1 * 100 if o1 else 0
     price_chg_3h = (price - o3) / o3 * 100 if o3 else 0
 
@@ -147,44 +130,28 @@ def evaluate_all_9_setups(candles, oi_series, price, funding, retail_long, whale
     oi_usd = oi_curr if oi_curr > 100_000 else oi_curr * price
     nd_usd = oi_usd * ((whale_long - (100.0 - whale_long)) / 100.0)
 
-    vwap_val, vwap_diff, _, _, _ = calculate_vwap_bands(candles_15m or [], price)
     up_poc, dn_poc = calculate_poc_levels(candles, price)
-    ema_15m_note, squeeze_signal, ema_bounds = analyze_15m_ema(candles_15m or [], price, oi_chg_1h, retail_long, whale_long, cvd_4h_usd)
+    ema_15m_note, squeeze_signal, ema_bounds = analyze_15m_ema(candles_15m or [], price, oi_chg_1h, trend_dir, cvd_4h_usd)
 
-    # #7 ШОРТ при любом ОИ и CVD < 0
-    if retail_long >= 58.0 and whale_short >= 56.0 and cvd_4h_usd < 0:
-        oi_state = "набор шортов ОИ↑" if oi_chg_1h >= 0 else "разгрузка лонгов ОИ↓"
-        hits.append(f"🔴 #7 Перекос в ЛОНГ ({oi_state}, Толпа {round(retail_long,1)}% в лонгах против Китов {round(whale_short,1)}% в шортах) — лучше рассмотреть ШОРТ")
-
-    # #7 ЛОНГ при растущем ОИ (>= +0.2%)
-    if oi_chg_1h >= 0.2 and retail_short >= 58.0 and whale_long >= 56.0:
-        hits.append(f"🟢 #7 Перекос в ШОРТ + ОИ↑ (Толпа {round(retail_short,1)}% в шортах против Китов {round(whale_long,1)}% в лонгах) — лучше рассмотреть ЛОНГ")
-
-    # #9 Сближение EMA7/14/28
     if squeeze_signal:
         hits.append(squeeze_signal)
 
-    # #10 Скрытый набор ОИ в боковике
+    # #10 Проторговка (флаг) ПО СТАРШЕМУ ТРЕНДУ с набором ОИ и подтверждением CVD
     last_4 = candles[-4:]
-    high_4h = max(h for _, h, _, _, _, *_ in last_4)
-    low_4h = min(l for _, _, l, _, _, *_ in last_4)
+    high_4h = max(float(x[1]) for x in last_4)
+    low_4h = min(float(x[2]) for x in last_4)
     range_4h_pct = (high_4h - low_4h) / low_4h * 100 if low_4h > 0 else 99.0
-    if range_4h_pct <= 3.5 and abs(price_chg_3h) <= 2.0 and (oi_chg_1h >= 1.0 or oi_chg_3h >= 2.0):
-        if whale_long >= 55.0 and retail_short >= 54.0:
-            hits.append(
-                f"🟢 #10 Набор ОИ в боковике (коридор {round(low_4h,6)}–{round(high_4h,6)}, размах {round(range_4h_pct,2)}%, "
-                f"ОИ +{round(oi_chg_1h,2)}% за 1ч) — лучше рассмотреть ЛОНГ"
-            )
-        elif whale_short >= 55.0 and retail_long >= 54.0:
-            hits.append(
-                f"🔴 #10 Набор ОИ в боковике (коридор {round(low_4h,6)}–{round(high_4h,6)}, размах {round(range_4h_pct,2)}%, "
-                f"ОИ +{round(oi_chg_1h,2)}% за 1ч) — лучше рассмотреть ШОРТ"
-            )
+    if range_4h_pct <= 3.0 and abs(price_chg_3h) <= 1.8 and (oi_chg_1h >= 1.0 or oi_chg_3h >= 2.0):
+        if trend_dir == "UP" and cvd_4h_usd > 0:
+            hits.append(f"🟢 #10 Бычий флаг по тренду 1Ч/4Ч (коридор {round(low_4h,6)}–{round(high_4h,6)}, ОИ +{round(oi_chg_1h,2)}%, CVD↑) — лучше рассмотреть ЛОНГ")
+        elif trend_dir == "DOWN" and cvd_4h_usd < 0:
+            hits.append(f"🔴 #10 Медвежий флаг по тренду 1Ч/4Ч (коридор {round(low_4h,6)}–{round(high_4h,6)}, ОИ +{round(oi_chg_1h,2)}%, CVD↓) — лучше рассмотреть ШОРТ")
 
     if hits and ema_15m_note and not any("#9" in h for h in hits):
         hits.append(ema_15m_note)
 
-    return hits, price_chg_1h, oi_chg_1h, retail_long, whale_long, vwap_val, vwap_diff, up_poc, dn_poc, cvd_4h_usd, cvd_pct, nd_usd, ema_bounds
+    return hits, price_chg_1h, oi_chg_1h, retail_long, whale_long, price, 0.0, up_poc, dn_poc, cvd_4h_usd, cvd_pct, nd_usd, ema_bounds
+
 
 
 
