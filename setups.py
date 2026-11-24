@@ -57,7 +57,8 @@ def analyze_15m_ema(candles_15m: list, curr_price: float, oi_chg_1h: float, reta
     oi_sign = "+" if oi_chg_1h > 0 else ""
 
     squeeze_signal = None
-    if spread_now <= 0.9 or spread_prev <= 0.9:
+    has_scissors = (retail_short >= 55.0 and whale_long >= 53.0) or (retail_long >= 55.0 and whale_short >= 53.0)
+    if (spread_now <= 0.85 or spread_prev <= 0.85) and has_scissors:
         whale_side = f"{round(whale_long,1)}% ЛОНГ" if whale_long >= 50 else f"{round(whale_short,1)}% ШОРТ"
         retail_side = f"{round(retail_long,1)}% ЛОНГ" if retail_long >= 50 else f"{round(retail_short,1)}% ШОРТ"
         squeeze_signal = (
@@ -167,7 +168,7 @@ def evaluate_all_9_setups(candles, oi_series, price, funding, retail_long, whale
         poc_p, poc_d = up_poc
         hits.append(f"🟢 #8 Дивергенция CVD (Цена↓, но дельта +{round(cvd_pct,1)}% — лимитный выкуп, цель POC {poc_p} (+{poc_d}%)) — лучше рассмотреть ЛОНГ")
 
-    # #9 Простое пересечение/сближение EMA7/14/28 + сводка Лонг/Шорт и ОИ
+    # #9 Пересечение/сближение EMA7/14/28 + перекос Толпа против Китов + значение ОИ
     if squeeze_signal:
         hits.append(squeeze_signal)
 
@@ -175,6 +176,7 @@ def evaluate_all_9_setups(candles, oi_series, price, funding, retail_long, whale
         hits.append(ema_15m_note)
 
     return hits, price_chg_1h, oi_chg_1h, retail_long, whale_long, vwap_val, vwap_diff, up_poc, dn_poc, cvd_4h_usd, cvd_pct, nd_usd
+
 
 
 
