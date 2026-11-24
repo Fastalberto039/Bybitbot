@@ -33,7 +33,6 @@ def analyze_15m_ema(candles_15m: list, curr_price: float, oi_chg_1h: float, tren
     ema14 = calc_ema(closes[-45:], 14)
     ema28 = calc_ema(closes[-60:], 28)
 
-    prev_close = closes[-2]
     avg_vol = sum(vols[-6:-1]) / 5.0 if len(vols) >= 6 else vols[-1]
     last_vol = vols[-1]
 
@@ -45,23 +44,26 @@ def analyze_15m_ema(candles_15m: list, curr_price: float, oi_chg_1h: float, tren
     ema_bounds = (ema_bot, ema_top)
     oi_sign = "+" if oi_chg_1h > 0 else ""
 
-    squeeze_signal = None
-    # Сжатие 15m EMA работает ТОЛЬКО по направлению старшего тренда!
-    if spread_now <= 0.75:
+    signal = None
+    # #12 РАННИЙ СЛОМ ТРЕНДА (когда 1Ч EMA28 уже пробита, а 1Ч EMA48 ещё догоняет)
+    if trend_dir == "REV_UP" and ema7 > ema14 > ema28 and abs(curr_price - ema14) / ema14 * 100 <= 0.45 and oi_chg_1h >= 1.0 and cvd_4h_usd >= 100_000:
+        signal = f"🔄 #12 СЛОМ ТРЕНДА ВВЕРХ (пробой 1Ч EMA28 + ретест 15m EMA14 {round(ema14, 6)}) — лучше рассмотреть ЛОНГ (ОИ +{round(oi_chg_1h, 2)}%, CVD {fmt_usd(cvd_4h_usd)})"
+    elif trend_dir == "REV_DOWN" and ema7 < ema14 < ema28 and abs(curr_price - ema14) / ema14 * 100 <= 0.45 and oi_chg_1h >= 1.0 and cvd_4h_usd <= -100_000:
+        signal = f"🔄 #12 СЛОМ ТРЕНДА ВНИЗ (пробой 1Ч EMA28 + ретест 15m EMA14 {round(ema14, 6)}) — лучше рассмотреть ШОРТ (ОИ +{round(oi_chg_1h, 2)}%, CVD {fmt_usd(cvd_4h_usd)})"
+
+    # #9 Сближение 15m EMA по старшему тренду
+    if not signal and spread_now <= 0.75:
         if trend_dir == "UP" and curr_price >= ema_bot * 0.998 and oi_chg_1h >= 0.3 and cvd_4h_usd > 0:
-            squeeze_signal = f"🪢 #9 СБЛИЖЕНИЕ EMA ПО ТРЕНДУ ВВЕРХ (рассмотреть ЛОНГ, зона {zone_l}, ширина {round(spread_now, 2)}%) | ОИ {oi_sign}{round(oi_chg_1h, 2)}% | CVD↑"
+            signal = f"🪢 #9 СБЛИЖЕНИЕ EMA ПО ТРЕНДУ ВВЕРХ (рассмотреть ЛОНГ, зона {zone_l}, ширина {round(spread_now, 2)}%) | ОИ {oi_sign}{round(oi_chg_1h, 2)}% | CVD↑"
         elif trend_dir == "DOWN" and curr_price <= ema_top * 1.002 and cvd_4h_usd < 0:
-            squeeze_signal = f"🪢 #9 СБЛИЖЕНИЕ EMA ПО ТРЕНДУ ВНИЗ (рассмотреть ШОРТ, зона {zone_l}, ширина {round(spread_now, 2)}%) | ОИ {oi_sign}{round(oi_chg_1h, 2)}% | CVD↓"
+            signal = f"🪢 #9 СБЛИЖЕНИЕ EMA ПО ТРЕНДУ ВНИЗ (рассмотреть ШОРТ, зона {zone_l}, ширина {round(spread_now, 2)}%) | ОИ {oi_sign}{round(oi_chg_1h, 2)}% | CVD↓"
 
-    # Модель Б: Первый откат к EMA14 по старшему тренду после импульса
-    pullback_signal = None
-    if trend_dir == "UP" and ema7 > ema14 > ema28 and abs(curr_price - ema14) / ema14 * 100 <= 0.35 and last_vol < avg_vol and cvd_4h_usd > 0 and oi_chg_1h >= 0.2:
-        pullback_signal = f"🎯 #11 ОТКАТ ПО ТРЕНДУ НА 15m EMA14 ({round(ema14, 6)}) — лучше рассмотреть ЛОНГ (ОИ {oi_sign}{round(oi_chg_1h, 2)}%, CVD↑)"
-    elif trend_dir == "DOWN" and ema7 < ema14 < ema28 and abs(curr_price - ema14) / ema14 * 100 <= 0.35 and last_vol < avg_vol and cvd_4h_usd < 0:
-        pullback_signal = f"🎯 #11 ОТКАТ ПО ТРЕНДУ ПОД 15m EMA14 ({round(ema14, 6)}) — лучше рассмотреть ШОРТ (ОИ {oi_sign}{round(oi_chg_1h, 2)}%, CVD↓)"
-
-    if pullback_signal:
-        squeeze_signal = pullback_signal
+    # #11 Первый откат к 15m EMA14 по старшему тренду
+    if not signal:
+        if trend_dir == "UP" and ema7 > ema14 > ema28 and abs(curr_price - ema14) / ema14 * 100 <= 0.35 and last_vol < avg_vol and cvd_4h_usd > 0 and oi_chg_1h >= 0.2:
+            signal = f"🎯 #11 ОТКАТ ПО ТРЕНДУ НА 15m EMA14 ({round(ema14, 6)}) — лучше рассмотреть ЛОНГ (ОИ {oi_sign}{round(oi_chg_1h, 2)}%, CVD↑)"
+        elif trend_dir == "DOWN" and ema7 < ema14 < ema28 and abs(curr_price - ema14) / ema14 * 100 <= 0.35 and last_vol < avg_vol and cvd_4h_usd < 0:
+            signal = f"🎯 #11 ОТКАТ ПО ТРЕНДУ ПОД 15m EMA14 ({round(ema14, 6)}) — лучше рассмотреть ШОРТ (ОИ {oi_sign}{round(oi_chg_1h, 2)}%, CVD↓)"
 
     if curr_price > ema_top:
         note = f"🚀 15m выше пучка EMA ({zone_l}, +{round(dist_from_28, 2)}%)"
@@ -70,7 +72,7 @@ def analyze_15m_ema(candles_15m: list, curr_price: float, oi_chg_1h: float, tren
     else:
         note = f"🔄 15m внутри пучка EMA ({zone_l})"
 
-    return note, squeeze_signal, ema_bounds
+    return note, signal, ema_bounds
 
 
 def calculate_vwap_bands(candles_15m: list, curr_price: float):
@@ -96,21 +98,24 @@ def evaluate_all_9_setups(candles, oi_series, price, funding, retail_long, whale
     if abs(funding) >= 0.08 or len(candles) < 36:
         return hits, 0.0, 0.0, retail_long, whale_long, price, 0.0, None, None, 0.0, 0.0, 0.0, None
 
-    # Определяем СТАРШИЙ ТРЕНД по 1Ч свечам (EMA28 и EMA48 — аналог 4Ч структуры)
-    closes_1h = [float(c[3]) for c in candles]
+    closes_1h = [float(c) for c in candles]
     ema28_1h = calc_ema(closes_1h[-40:], 28)
     ema48_1h = calc_ema(closes_1h, 48)
+
     if price > ema28_1h and ema28_1h > ema48_1h:
         trend_dir = "UP"
     elif price < ema28_1h and ema28_1h < ema48_1h:
         trend_dir = "DOWN"
+    elif price > ema28_1h and ema28_1h <= ema48_1h:
+        trend_dir = "REV_UP"
+    elif price < ema28_1h and ema28_1h >= ema48_1h:
+        trend_dir = "REV_DOWN"
     else:
-        # В пиле без тренда на старшем ТФ вообще не входим!
         return hits, 0.0, 0.0, retail_long, whale_long, price, 0.0, None, None, 0.0, 0.0, 0.0, None
 
     last_c = candles[-1]
-    o1 = float(last_c[0])
-    o3 = float(candles[-3][0])
+    o1 = float(last_c)
+    o3 = float(candles[-3])
     price_chg_1h = (price - o1) / o1 * 100 if o1 else 0
     price_chg_3h = (price - o3) / o3 * 100 if o3 else 0
 
@@ -131,15 +136,15 @@ def evaluate_all_9_setups(candles, oi_series, price, funding, retail_long, whale
     nd_usd = oi_usd * ((whale_long - (100.0 - whale_long)) / 100.0)
 
     up_poc, dn_poc = calculate_poc_levels(candles, price)
-    ema_15m_note, squeeze_signal, ema_bounds = analyze_15m_ema(candles_15m or [], price, oi_chg_1h, trend_dir, cvd_4h_usd)
+    ema_15m_note, main_signal, ema_bounds = analyze_15m_ema(candles_15m or [], price, oi_chg_1h, trend_dir, cvd_4h_usd)
 
-    if squeeze_signal:
-        hits.append(squeeze_signal)
+    if main_signal:
+        hits.append(main_signal)
 
-    # #10 Проторговка (флаг) ПО СТАРШЕМУ ТРЕНДУ с набором ОИ и подтверждением CVD
+    # #10 Флаг по старшему тренду с набором ОИ и подтверждением CVD
     last_4 = candles[-4:]
-    high_4h = max(float(x[1]) for x in last_4)
-    low_4h = min(float(x[2]) for x in last_4)
+    high_4h = max(float(x) for x in last_4)
+    low_4h = min(float(x) for x in last_4)
     range_4h_pct = (high_4h - low_4h) / low_4h * 100 if low_4h > 0 else 99.0
     if range_4h_pct <= 3.0 and abs(price_chg_3h) <= 1.8 and (oi_chg_1h >= 1.0 or oi_chg_3h >= 2.0):
         if trend_dir == "UP" and cvd_4h_usd > 0:
@@ -151,6 +156,7 @@ def evaluate_all_9_setups(candles, oi_series, price, funding, retail_long, whale
         hits.append(ema_15m_note)
 
     return hits, price_chg_1h, oi_chg_1h, retail_long, whale_long, price, 0.0, up_poc, dn_poc, cvd_4h_usd, cvd_pct, nd_usd, ema_bounds
+
 
 
 
