@@ -52,12 +52,12 @@ def analyze_15m_ema(candles_15m: list, curr_price: float):
     zone_l = f"{round(ema_bot, 6)}–{round(ema_top, 6)}"
 
     squeeze_signal = None
-    if spread_prev <= 0.85 or spread_now <= 0.85:
-        if curr_price > ema_top and prev_close <= prev_top * 1.004 and last_vol >= avg_vol * 1.0 and dist_from_28 <= 1.8:
+    if spread_prev <= 1.1 or spread_now <= 1.1:
+        if curr_price > ema_top and prev_close <= prev_top * 1.006 and last_vol >= avg_vol * 0.95 and dist_from_28 <= 2.2:
             squeeze_signal = f"🟢 #9 ВЫХОД ИЗ СПЛЕТЕНИЯ EMA7/14/28 ВВЕРХ (узел {zone_l}, объём подтверждён — ЛОНГ, стоп за узел)"
-        elif curr_price < ema_bot and prev_close >= prev_bot * 0.996 and last_vol >= avg_vol * 1.0 and dist_from_28 >= -1.8:
+        elif curr_price < ema_bot and prev_close >= prev_bot * 0.994 and last_vol >= avg_vol * 0.95 and dist_from_28 >= -2.2:
             squeeze_signal = f"🔴 #9 ВЫХОД ИЗ СПЛЕТЕНИЯ EMA7/14/28 ВНИЗ (узел {zone_l}, объём подтверждён — ШОРТ, стоп за узел)"
-        elif spread_now <= 0.65 and ema_bot * 0.995 <= curr_price <= ema_top * 1.005:
+        elif spread_now <= 0.95 and ema_bot * 0.99 <= curr_price <= ema_top * 1.01:
             squeeze_signal = f"🪢 #9 ПРУЖИНА EMA7/14/28 СЖАТА (узел {zone_l}, ширина {round(spread_now, 2)}%) — ждём пробой на объёме!"
 
     if curr_price > ema_top:
@@ -160,15 +160,13 @@ def evaluate_all_9_setups(candles, oi_series, price, funding, retail_long, whale
         hits.append(f"🟢 #8 Дивергенция CVD (Цена↓, но дельта +{round(cvd_pct,1)}% — лимитный выкуп, цель POC {poc_p} (+{poc_d}%)) — лучше рассмотреть ЛОНГ")
 
     if squeeze_signal:
-        if "ВЫХОД ИЗ СПЛЕТЕНИЯ" in squeeze_signal:
-            hits.append(squeeze_signal)
-        elif oi_chg_1h >= 0.3 or abs(whale_long - retail_long) >= 10.0:
-            hits.append(squeeze_signal)
+        hits.append(squeeze_signal)
 
     if hits and ema_15m_note and not any("#9" in h for h in hits):
         hits.append(ema_15m_note)
 
     return hits, price_chg_1h, oi_chg_1h, retail_long, whale_long, vwap_val, vwap_diff, up_poc, dn_poc, cvd_4h_usd, cvd_pct, nd_usd
+
 
 
 
