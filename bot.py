@@ -1,5 +1,4 @@
 import os, json, time, asyncio
-from datetime import datetime, timezone
 import aiohttp
 from aiogram import Bot
 from setups import evaluate_all_9_setups, fmt_usd
@@ -102,12 +101,10 @@ async def get_universe(session, source):
     return universe
 async def get_market_history(session, symbol, source):
     candles, c15, oi_s, rl, wl = [], [], [], 50.0, 50.0
-    now = datetime.now(timezone.utc)
-    start_ms = int(datetime(now.year, now.month, now.day, tzinfo=timezone.utc).timestamp() * 1000)
     if source != "BYBIT":
         kl, kl15, oi, gl, tp = await asyncio.gather(
             fetch_json(session, f"{source}/fapi/v1/klines", {"symbol": symbol, "interval": "1h", "limit": 48}),
-            fetch_json(session, f"{source}/fapi/v1/klines", {"symbol": symbol, "interval": "15m", "startTime": start_ms, "limit": 100}),
+            fetch_json(session, f"{source}/fapi/v1/klines", {"symbol": symbol, "interval": "15m", "limit": 100}),
             fetch_json(session, f"{source}/futures/data/openInterestHist", {"symbol": symbol, "period": "1h", "limit": 24}),
             fetch_json(session, f"{source}/futures/data/globalLongShortAccountRatio", {"symbol": symbol, "period": "1h", "limit": 1}),
             fetch_json(session, f"{source}/futures/data/topLongShortPositionRatio", {"symbol": symbol, "period": "1h", "limit": 1}),
@@ -124,7 +121,7 @@ async def get_market_history(session, symbol, source):
             return candles, c15, oi_s, rl, wl
     kl_b, kl15_b, oi_b, ac_b = await asyncio.gather(
         fetch_bybit(session, "/v5/market/kline", {"category": "linear", "symbol": symbol, "interval": "60", "limit": 48}),
-        fetch_bybit(session, "/v5/market/kline", {"category": "linear", "symbol": symbol, "interval": "15", "start": start_ms, "limit": 100}),
+        fetch_bybit(session, "/v5/market/kline", {"category": "linear", "symbol": symbol, "interval": "15", "limit": 100}),
         fetch_bybit(session, "/v5/market/open-interest", {"category": "linear", "symbol": symbol, "intervalTime": "1h", "limit": 24}),
         fetch_bybit(session, "/v5/market/account-ratio", {"category": "linear", "symbol": symbol, "period": "1h", "limit": 1}),
     )
@@ -177,9 +174,9 @@ def explain_context(p_chg, oi_chg, rl, wl, cvd_usd, nd_usd, funding):
 
 def format_alert(item, hits, p_chg, oi_chg, rl, wl, vwap_val, vwap_diff, up_poc, dn_poc, cvd_usd, cvd_pct, nd_usd, candles):
     src = "Binance Futures" if item["source"] != "BYBIT" else "Bybit Futures"
-    has_l = any("рассмотреть ЛОНГ" in h or "ЛОНГ, стоп за узел" in h for h in hits)
-    has_s = any("рассмотреть ШОРТ" in h or "ШОРТ, стоп за узел" in h for h in hits)
-    verdict = "🟢 <b>ИТОГ: Лучше рассмотреть ЛОНГ</b>" if (has_l and not has_s) else ("🔴 <b>ИТОГ: Лучше рассмотреть ШОРТ</b>" if (has_s and not has_l) else "🪢 <b>ИТОГ: Пружина сжата — ждём пробой узла EMA</b>")
+    has_l = any("рассмотреть ЛОНГ" in h for h in hits)
+    has_s = any("рассмотреть ШОРТ" in h for h in hits)
+    verdict = "🟢 <b>ИТОГ: Лучше рассмотреть ЛОНГ</b>" if (has_l and not has_s) else ("🔴 <b>ИТОГ: Лучше рассмотреть ШОРТ</b>" if (has_s and not has_l) else "🪢 <b>ИТОГ: Пересечение/сближение EMA7/14/28</b>")
     up_p, up_d = up_poc if up_poc else (None, None)
     dn_p, dn_d = dn_poc if dn_poc else (None, None)
     pocs = ([f"⬆️ {up_p} (+{up_d}%)"] if up_p else []) + ([f"⬇️ {dn_p} (-{dn_d}%)"] if dn_p else [])
@@ -208,7 +205,7 @@ def format_alert(item, hits, p_chg, oi_chg, rl, wl, vwap_val, vwap_diff, up_poc,
     return "\n".join(lines)
 
 
-async def process_symbol(sem, session, bot, item, cache, lock):
+async def process_symbol(sem, session, bot, item, cache, lock, stats):
     async with sem:
         sym = item["symbol"]
         candles, c15, oi_s, rl, wl = await get_market_history(session, sym, item["source"])
@@ -218,28 +215,33 @@ async def process_symbol(sem, session, bot, item, cache, lock):
         if not hits:
             return
         is_ema9 = any("#9" in h for h in hits)
+        if is_ema9:
+            stats["ema9"] += 1
         cache_key = f"{sym}_EMA9" if is_ema9 else sym
         if time.time() - cache.get(cache_key, 0) < COOLDOWN_SEC:
             return
         await bot.send_message(CHAT_ID, format_alert(item, hits, p_chg, oi_chg, rl, wl, vwap_val, vwap_diff, up_poc, dn_poc, cvd_usd, cvd_pct, nd_usd, candles), parse_mode="HTML", disable_web_page_preview=True)
         async with lock:
             cache[cache_key] = time.time()
+            stats["sent"] += 1
 
 
 async def scan_market():
     bot = Bot(token=BOT_TOKEN)
     cache, lock = load_cache(), asyncio.Lock()
+    stats = {"ema9": 0, "sent": 0}
     async with aiohttp.ClientSession() as session:
         source = await get_active_source(session)
         universe = await get_universe(session, source)
-        print(f"Источник: {source} | Монет: {len(universe)}")
         sem = asyncio.Semaphore(8)
-        await asyncio.gather(*(process_symbol(sem, session, bot, item, cache, lock) for item in universe))
+        await asyncio.gather(*(process_symbol(sem, session, bot, item, cache, lock, stats) for item in universe))
+        print(f"Источник: {source} | Монет: {len(universe)} | Найдено #9: {stats['ema9']} | Отправлено: {stats['sent']}")
     save_cache(cache)
     await bot.session.close()
 
 
 asyncio.run(scan_market())
+
 
 
 
