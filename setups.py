@@ -57,13 +57,15 @@ def analyze_15m_ema(candles_15m: list, curr_price: float, oi_chg_1h: float, reta
     oi_sign = "+" if oi_chg_1h > 0 else ""
 
     squeeze_signal = None
-    long_ready = (retail_short >= 58.0 and whale_long >= 57.0) and (curr_price >= ema_bot * 0.998) and (cvd_4h_usd > 0)
-    short_ready = (retail_long >= 58.0 and whale_short >= 57.0) and (curr_price <= ema_top * 1.002) and (cvd_4h_usd < 0)
+    # ЛОНГ: нужен непадающий ОИ (>= +0.1%) и цена внутри узла/выше
+    long_ready = (retail_short >= 56.0 and whale_long >= 55.0) and (curr_price >= ema_bot * 0.997) and (oi_chg_1h >= 0.1)
+    # ШОРТ: ОИ может как расти (набор шортов), так и падать (слив лонгов толпы) при CVD < 0
+    short_ready = (retail_long >= 56.0 and whale_short >= 55.0) and (curr_price <= ema_top * 1.003) and (cvd_4h_usd < 0)
 
-    if (spread_now <= 0.75 or spread_prev <= 0.75) and oi_chg_1h >= 0.4 and (long_ready or short_ready):
+    if (spread_now <= 0.85 or spread_prev <= 0.85) and (long_ready or short_ready):
         whale_side = f"{round(whale_long,1)}% ЛОНГ" if whale_long >= 50 else f"{round(whale_short,1)}% ШОРТ"
         retail_side = f"{round(retail_long,1)}% ЛОНГ" if retail_long >= 50 else f"{round(retail_short,1)}% ШОРТ"
-        pos_hint = "рассмотреть ЛОНГ (узел + ОИ↑ + CVD↑)" if long_ready else "рассмотреть ШОРТ (узел + ОИ↑ + CVD↓)"
+        pos_hint = "рассмотреть ЛОНГ (узел + ОИ↑)" if long_ready else "рассмотреть ШОРТ (узел + слив лонгов/CVD↓)"
         squeeze_signal = (
             f"🪢 #9 СБЛИЖЕНИЕ EMA7/14/28 ({pos_hint}, зона {zone_l}, ширина {round(spread_now, 2)}%) | "
             f"Киты {whale_side} vs Толпа {retail_side} | ОИ {oi_sign}{round(oi_chg_1h, 2)}%"
@@ -109,7 +111,7 @@ def calculate_poc_levels(candles: list, curr_price: float):
     for o, h, l, c, v, *_ in candles[:-2]:
         tp = (h + l + c) / 3.0
         dist_pct = abs(tp - curr_price) / curr_price * 100 if curr_price else 0
-        if 1.5 <= dist_pct <= 7.0:
+        if 1.0 <= dist_pct <= 7.0:
             if tp > curr_price and v > best_up_vol:
                 best_up_vol, above_poc = v, (round(tp, 6), round(dist_pct, 2))
             elif tp < curr_price and v > best_dn_vol:
@@ -119,7 +121,7 @@ def calculate_poc_levels(candles: list, curr_price: float):
 
 def evaluate_all_9_setups(candles, oi_series, price, funding, retail_long, whale_long, candles_15m=None):
     hits = []
-    if abs(funding) >= 0.08:
+    if abs(funding) >= 0.09:
         return hits, 0.0, 0.0, retail_long, whale_long, price, 0.0, None, None, 0.0, 0.0, 0.0
 
     retail_short = 100.0 - retail_long
@@ -150,15 +152,16 @@ def evaluate_all_9_setups(candles, oi_series, price, funding, retail_long, whale
     up_poc, dn_poc = calculate_poc_levels(candles, price)
     ema_15m_note, squeeze_signal = analyze_15m_ema(candles_15m or [], price, oi_chg_1h, retail_long, whale_long, cvd_4h_usd)
 
-    # #7 Мощные «Ножницы» в ЛОНГ и ШОРТ при растущем ОИ (>= +0.5%) и подтверждении CVD
-    if oi_chg_1h >= 0.5:
-        if retail_long >= 60.0 and whale_long <= 42.0 and cvd_4h_usd < 0 and dn_poc:
-            hits.append(f"🔴 #7 Перекос в ЛОНГ + ОИ↑ + CVD↓ (Толпа {round(retail_long,1)}% в лонгах против Китов {round(whale_short,1)}% в шортах) — лучше рассмотреть ШОРТ")
+    # #7 ШОРТ работает при ЛЮБОМ ОИ (и наборе шортов, и паническом закрытии лонгов при CVD < 0)
+    if retail_long >= 58.0 and whale_short >= 56.0 and cvd_4h_usd < 0:
+        oi_state = "набор шортов ОИ↑" if oi_chg_1h >= 0 else "разгрузка лонгов ОИ↓"
+        hits.append(f"🔴 #7 Перекос в ЛОНГ ({oi_state}, Толпа {round(retail_long,1)}% в лонгах против Китов {round(whale_short,1)}% в шортах) — лучше рассмотреть ШОРТ")
 
-        if retail_short >= 60.0 and whale_long >= 58.0 and cvd_4h_usd > 0 and up_poc:
-            hits.append(f"🟢 #7 Перекос в ШОРТ + ОИ↑ + CVD↑ (Толпа {round(retail_short,1)}% в шортах против Китов {round(whale_long,1)}% в лонгах) — лучше рассмотреть ЛОНГ")
+    # #7 ЛОНГ требует растущего ОИ (>= +0.2%)
+    if oi_chg_1h >= 0.2 and retail_short >= 58.0 and whale_long >= 56.0:
+        hits.append(f"🟢 #7 Перекос в ШОРТ + ОИ↑ (Толпа {round(retail_short,1)}% в шортах против Китов {round(whale_long,1)}% в лонгах) — лучше рассмотреть ЛОНГ")
 
-    # #9 Снайперское сближение EMA7/14/28 + ОИ↑ + Киты >= 57% + CVD
+    # #9 Сближение EMA7/14/28
     if squeeze_signal:
         hits.append(squeeze_signal)
 
@@ -167,22 +170,23 @@ def evaluate_all_9_setups(candles, oi_series, price, funding, retail_long, whale
     high_4h = max(h for _, h, _, _, _, *_ in last_4)
     low_4h = min(l for _, _, l, _, _, *_ in last_4)
     range_4h_pct = (high_4h - low_4h) / low_4h * 100 if low_4h > 0 else 99.0
-    if range_4h_pct <= 3.5 and abs(price_chg_3h) <= 2.0 and (oi_chg_1h >= 1.2 or oi_chg_3h >= 2.5):
-        if whale_long >= 57.0 and retail_short >= 56.0 and cvd_4h_usd > 0:
+    if range_4h_pct <= 3.5 and abs(price_chg_3h) <= 2.0 and (oi_chg_1h >= 1.0 or oi_chg_3h >= 2.0):
+        if whale_long >= 55.0 and retail_short >= 54.0:
             hits.append(
                 f"🟢 #10 Набор ОИ в боковике (коридор {round(low_4h,6)}–{round(high_4h,6)}, размах {round(range_4h_pct,2)}%, "
-                f"ОИ +{round(oi_chg_1h,2)}% за 1ч) — лучше рассмотреть ЛОНГ (Киты↑ + CVD↑)"
+                f"ОИ +{round(oi_chg_1h,2)}% за 1ч) — лучше рассмотреть ЛОНГ"
             )
-        elif whale_short >= 57.0 and retail_long >= 56.0 and cvd_4h_usd < 0:
+        elif whale_short >= 55.0 and retail_long >= 54.0:
             hits.append(
                 f"🔴 #10 Набор ОИ в боковике (коридор {round(low_4h,6)}–{round(high_4h,6)}, размах {round(range_4h_pct,2)}%, "
-                f"ОИ +{round(oi_chg_1h,2)}% за 1ч) — лучше рассмотреть ШОРТ (Киты↓ + CVD↓)"
+                f"ОИ +{round(oi_chg_1h,2)}% за 1ч) — лучше рассмотреть ШОРТ"
             )
 
     if hits and ema_15m_note and not any("#9" in h for h in hits):
         hits.append(ema_15m_note)
 
     return hits, price_chg_1h, oi_chg_1h, retail_long, whale_long, vwap_val, vwap_diff, up_poc, dn_poc, cvd_4h_usd, cvd_pct, nd_usd
+
 
 
 
