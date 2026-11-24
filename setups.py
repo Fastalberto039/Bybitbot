@@ -51,14 +51,14 @@ def analyze_15m_ema(candles_15m: list, curr_price: float):
     dist_from_28 = (curr_price - ema28) / ema28 * 100 if ema28 > 0 else 0.0
     zone_l = f"{round(ema_bot, 6)}–{round(ema_top, 6)}"
 
-    squeeze_signal = None
-    # Проверка сплетения EMA7/14/28 в узкую нитку (<= 0.45%)
-    if spread_prev <= 0.45 or spread_now <= 0.45:
-        if curr_price > ema_top and prev_close <= prev_top * 1.002 and last_vol >= avg_vol * 1.15 and dist_from_28 <= 1.5:
+        squeeze_signal = None
+    # Проверка сплетения EMA7/14/28 в узкий пучок (<= 0.85%)
+    if spread_prev <= 0.85 or spread_now <= 0.85:
+        if curr_price > ema_top and prev_close <= prev_top * 1.004 and last_vol >= avg_vol * 1.0 and dist_from_28 <= 1.8:
             squeeze_signal = f"🟢 #9 ВЫХОД ИЗ СПЛЕТЕНИЯ EMA7/14/28 ВВЕРХ (узел {zone_l}, объём подтверждён — ЛОНГ, стоп за узел)"
-        elif curr_price < ema_bot and prev_close >= prev_bot * 0.998 and last_vol >= avg_vol * 1.15 and dist_from_28 >= -1.5:
+        elif curr_price < ema_bot and prev_close >= prev_bot * 0.996 and last_vol >= avg_vol * 1.0 and dist_from_28 >= -1.8:
             squeeze_signal = f"🔴 #9 ВЫХОД ИЗ СПЛЕТЕНИЯ EMA7/14/28 ВНИЗ (узел {zone_l}, объём подтверждён — ШОРТ, стоп за узел)"
-        elif spread_now <= 0.35 and ema_bot * 0.997 <= curr_price <= ema_top * 1.003:
+        elif spread_now <= 0.65 and ema_bot * 0.995 <= curr_price <= ema_top * 1.005:
             squeeze_signal = f"🪢 #9 ПРУЖИНА EMA7/14/28 СЖАТА (узел {zone_l}, ширина {round(spread_now, 2)}%) — ждём пробой на объёме!"
 
     if curr_price > ema_top:
