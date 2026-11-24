@@ -57,12 +57,15 @@ def analyze_15m_ema(candles_15m: list, curr_price: float, oi_chg_1h: float, reta
     oi_sign = "+" if oi_chg_1h > 0 else ""
 
     squeeze_signal = None
-    has_scissors = (retail_short >= 55.0 and whale_long >= 53.0) or (retail_long >= 55.0 and whale_short >= 53.0)
-    if (spread_now <= 0.85 or spread_prev <= 0.85) and has_scissors:
+    long_ready = (retail_short >= 55.0 and whale_long >= 53.0) and (curr_price >= ema_bot * 0.998)
+    short_ready = (retail_long >= 55.0 and whale_short >= 53.0) and (curr_price <= ema_top * 1.002)
+
+    if (spread_now <= 0.85 or spread_prev <= 0.85) and (long_ready or short_ready):
         whale_side = f"{round(whale_long,1)}% ЛОНГ" if whale_long >= 50 else f"{round(whale_short,1)}% ШОРТ"
         retail_side = f"{round(retail_long,1)}% ЛОНГ" if retail_long >= 50 else f"{round(retail_short,1)}% ШОРТ"
+        pos_hint = "цена в узле/выше → ЛОНГ" if long_ready else "цена в узле/ниже → ШОРТ"
         squeeze_signal = (
-            f"🪢 #9 ПЕРЕСЕЧЕНИЕ/СБЛИЖЕНИЕ EMA7/14/28 (зона {zone_l}, ширина {round(spread_now, 2)}%) | "
+            f"🪢 #9 СБЛИЖЕНИЕ EMA7/14/28 ({pos_hint}, зона {zone_l}, ширина {round(spread_now, 2)}%) | "
             f"Киты {whale_side} vs Толпа {retail_side} | ОИ {oi_sign}{round(oi_chg_1h, 2)}%"
         )
 
@@ -171,16 +174,16 @@ def evaluate_all_9_setups(candles, oi_series, price, funding, retail_long, whale
         poc_p, poc_d = up_poc
         hits.append(f"🟢 #8 Дивергенция CVD (Цена↓, но дельта +{round(cvd_pct,1)}% — лимитный выкуп, цель POC {poc_p} (+{poc_d}%)) — лучше рассмотреть ЛОНГ")
 
-    # #9 Пересечение/сближение EMA7/14/28 + перекос Толпа против Китов + значение ОИ
+    # #9 Сближение EMA7/14/28 + перекос Толпа против Китов + правильное положение цены у узла
     if squeeze_signal:
         hits.append(squeeze_signal)
 
-    # #10 Скрытый набор ОИ в узком боковике (цена стоит <= 2.0% за 4ч, а ОИ уверенно растёт)
+    # #10 Скрытый набор ОИ в боковике (размах за 4ч <= 3.5%, смещение за 3ч <= 2.0%, ОИ уверенно растёт)
     last_4 = candles[-4:]
     high_4h = max(h for _, h, _, _, _, *_ in last_4)
     low_4h = min(l for _, _, l, _, _, *_ in last_4)
     range_4h_pct = (high_4h - low_4h) / low_4h * 100 if low_4h > 0 else 99.0
-    if range_4h_pct <= 2.0 and abs(price_chg_3h) <= 1.0 and (oi_chg_1h >= 1.2 or oi_chg_3h >= 2.5):
+    if range_4h_pct <= 3.5 and abs(price_chg_3h) <= 2.0 and (oi_chg_1h >= 1.2 or oi_chg_3h >= 2.5):
         if whale_long >= 54.0 and retail_short >= 54.0:
             dir_hint = "перевес Китов в ЛОНГ — лучше рассмотреть ЛОНГ"
             ico = "🟢"
@@ -199,6 +202,7 @@ def evaluate_all_9_setups(candles, oi_series, price, funding, retail_long, whale
         hits.append(ema_15m_note)
 
     return hits, price_chg_1h, oi_chg_1h, retail_long, whale_long, vwap_val, vwap_diff, up_poc, dn_poc, cvd_4h_usd, cvd_pct, nd_usd
+
 
 
 
