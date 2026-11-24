@@ -182,7 +182,7 @@ def format_alert(item, hits, p_chg, oi_chg, rl, wl, up_poc, dn_poc, cvd_usd, nd_
     ] + ([btc_line] if btc_line else []) + [
         f"💰 <b>Цена:</b> {item['price']} ({round(p_chg, 2)}% за 1ч) | 💸 <b>Фандинг:</b> {round(item['funding'], 4)}%",
         f"🎯 <b>Цели POC:</b> {' | '.join(pocs) if pocs else 'нет близких'} | 📈 <b>ОИ:</b> {oi_sign}{round(oi_chg, 2)}%",
-        f"💥 <b>Ликвидации (25x):</b> шортов > <code>{round(l24*1.04, 6)}</code> | лонгов < <code>{round(h24*0.96, 6)}</code>",
+        f"💥 <b>Ликвидации (25x):</b> шортов выше <code>{round(l24*1.04, 6)}</code> | лонгов ниже <code>{round(h24*0.96, 6)}</code>",
         f"👥 <b>Толпа:</b> {crowd_txt} | 🐋 <b>Киты:</b> {whale_txt}",
         f"📊 <b>CVD (4ч):</b> {cvd_txt} | ⚖️ <b>Net Delta:</b> {nd_txt}",
         "", "<b>Сработавшие сетапы:</b>"
