@@ -23,35 +23,58 @@ def calc_ema(values: list, period: int) -> float:
     return ema
 
 
-def analyze_15m_ema(candles_15m: list, curr_price: float) -> str:
-    if not candles_15m or len(candles_15m) < 30:
-        return ""
+def analyze_15m_ema(candles_15m: list, curr_price: float):
+    if not candles_15m or len(candles_15m) < 32:
+        return "", None
     closes = [float(cl) for _, _, _, cl, *_ in candles_15m]
     vols = [float(v) for _, _, _, _, v, *_ in candles_15m]
+
     ema7 = calc_ema(closes[-35:], 7)
     ema14 = calc_ema(closes[-45:], 14)
     ema28 = calc_ema(closes[-60:], 28)
+
+    prev_ema7 = calc_ema(closes[-36:-1], 7)
+    prev_ema14 = calc_ema(closes[-46:-1], 14)
     prev_ema28 = calc_ema(closes[-61:-1], 28)
+
     prev_close = closes[-2]
     avg_vol = sum(vols[-6:-1]) / 5.0 if len(vols) >= 6 else vols[-1]
     last_vol = vols[-1]
 
     ema_top = max(ema7, ema14, ema28)
     ema_bot = min(ema7, ema14, ema28)
+    prev_top = max(prev_ema7, prev_ema14, prev_ema28)
+    prev_bot = min(prev_ema7, prev_ema14, prev_ema28)
+
+    spread_now = (ema_top - ema_bot) / ema_bot * 100 if ema_bot > 0 else 99.0
+    spread_prev = (prev_top - prev_bot) / prev_bot * 100 if prev_bot > 0 else 99.0
     dist_from_28 = (curr_price - ema28) / ema28 * 100 if ema28 > 0 else 0.0
-    zone_l = f"{round(min(ema7, ema14), 6)}–{round(max(ema7, ema14), 6)}"
+    zone_l = f"{round(ema_bot, 6)}–{round(ema_top, 6)}"
+
+    squeeze_signal = None
+    # Проверка сплетения EMA7/14/28 в узкую нитку (<= 0.45%)
+    if spread_prev <= 0.45 or spread_now <= 0.45:
+        if curr_price > ema_top and prev_close <= prev_top * 1.002 and last_vol >= avg_vol * 1.15 and dist_from_28 <= 1.5:
+            squeeze_signal = f"🟢 #9 ВЫХОД ИЗ СПЛЕТЕНИЯ EMA7/14/28 ВВЕРХ (узел {zone_l}, объём подтверждён — ЛОНГ, стоп за узел)"
+        elif curr_price < ema_bot and prev_close >= prev_bot * 0.998 and last_vol >= avg_vol * 1.15 and dist_from_28 >= -1.5:
+            squeeze_signal = f"🔴 #9 ВЫХОД ИЗ СПЛЕТЕНИЯ EMA7/14/28 ВНИЗ (узел {zone_l}, объём подтверждён — ШОРТ, стоп за узел)"
+        elif spread_now <= 0.35 and ema_bot * 0.997 <= curr_price <= ema_top * 1.003:
+            squeeze_signal = f"🪢 #9 ПРУЖИНА EMA7/14/28 СЖАТА (узел {zone_l}, ширина {round(spread_now, 2)}%) — ждём пробой на объёме!"
 
     if curr_price > ema_top:
         if (prev_close <= prev_ema28 * 1.003 or dist_from_28 <= 1.35) and last_vol >= avg_vol * 0.9:
-            return f"🚀 15m СТАРТ ЛОНГА: выход над пучком EMA7/14/28 (зона ретеста {zone_l}, отрыв +{round(dist_from_28, 2)}%)"
-        return f"⏳ 15m ЛОНГ уже в пути (+{round(dist_from_28, 2)}% от EMA28) — не догонять, ждать откат в зону EMA {zone_l}"
-
-    if curr_price < ema_bot:
+            note = f"🚀 15m СТАРТ ЛОНГА: выход над пучком EMA7/14/28 (зона {zone_l}, +{round(dist_from_28, 2)}%)"
+        else:
+            note = f"⏳ 15m ЛОНГ уже в пути (+{round(dist_from_28, 2)}% от EMA28) — не догонять, ждать ретест EMA {zone_l}"
+    elif curr_price < ema_bot:
         if (prev_close >= prev_ema28 * 0.997 or dist_from_28 >= -1.35) and last_vol >= avg_vol * 0.9:
-            return f"🔻 15m СТАРТ ШОРТА: пробой вниз под пучок EMA7/14/28 (зона ретеста {zone_l}, отрыв {round(dist_from_28, 2)}%)"
-        return f"⏳ 15m ШОРТ уже в пути ({round(dist_from_28, 2)}% от EMA28) — ждать откат к зоне EMA {zone_l}"
+            note = f"🔻 15m СТАРТ ШОРТА: пробой вниз под пучок EMA7/14/28 (зона {zone_l}, {round(dist_from_28, 2)}%)"
+        else:
+            note = f"⏳ 15m ШОРТ уже в пути ({round(dist_from_28, 2)}% от EMA28) — ждать откат к зоне EMA {zone_l}"
+    else:
+        note = f"🔄 15m СЖАТИЕ внутри пучка EMA7/14/28 ({zone_l}) — пружина сжимается, ждать выход"
 
-    return f"🔄 15m СЖАТИЕ внутри пучка EMA7/14/28 ({round(ema_bot, 6)}–{round(ema_top, 6)}) — пружина сжимается, ждать выход"
+    return note, squeeze_signal
 
 
 def calculate_vwap_bands(candles_15m: list, curr_price: float):
@@ -116,7 +139,7 @@ def evaluate_all_9_setups(candles, oi_series, price, funding, retail_long, whale
 
     vwap_val, vwap_diff, _, _, _ = calculate_vwap_bands(candles_15m or [], price)
     up_poc, dn_poc = calculate_poc_levels(candles, price)
-    ema_15m_note = analyze_15m_ema(candles_15m or [], price)
+    ema_15m_note, squeeze_signal = analyze_15m_ema(candles_15m or [], price)
 
     # #3 Выкуп пролива от суточного дна
     if price_chg_3h <= -3.0 and l1 <= low_24h * 1.004 and v1 >= avg_vol_20 * 1.6 and ((c1 > o1) or (lower_wick > body1 * 1.2)):
@@ -124,14 +147,14 @@ def evaluate_all_9_setups(candles, oi_series, price, funding, retail_long, whale
         poc_t = f", цель POC {poc_p} (+{poc_d}%)" if poc_p else ""
         hits.append(f"🟢 #3 Выкуп пролива от дна (объём + откуп{poc_t}) — лучше рассмотреть ЛОНГ")
 
-    # #7 Чистые «Ножницы» (Толпа против Китов, без фандингового шума)
+    # #7 Чистые «Ножницы» (Толпа против Китов)
     if (retail_long >= 58.0 and whale_long <= 45.0) or (retail_long >= 65.0 and whale_long <= 48.0):
         hits.append(f"🔴 #7 Перекос в ЛОНГ (Толпа {round(retail_long,1)}% в лонгах против Китов {round(100-whale_long,1)}% в шортах) — лучше рассмотреть ШОРТ")
 
     if (retail_short >= 58.0 and whale_long >= 55.0) or (retail_short >= 65.0 and whale_long >= 52.0):
         hits.append(f"🟢 #7 Перекос в ШОРТ (Толпа {round(retail_short,1)}% в шортах против Китов {round(whale_long,1)}% в лонгах) — лучше рассмотреть ЛОНГ")
 
-    # #8 Дивергенция CVD (Скрытые продажи на росте или лимитный выкуп на падении)
+    # #8 Дивергенция CVD
     if price_chg_3h >= 2.5 and cvd_pct <= -6.0 and dn_poc:
         poc_p, poc_d = dn_poc
         hits.append(f"🔴 #8 Дивергенция CVD (Цена↑, но дельта {round(cvd_pct,1)}% — скрытые продажи, цель POC {poc_p} (-{poc_d}%)) — лучше рассмотреть ШОРТ")
@@ -140,10 +163,18 @@ def evaluate_all_9_setups(candles, oi_series, price, funding, retail_long, whale
         poc_p, poc_d = up_poc
         hits.append(f"🟢 #8 Дивергенция CVD (Цена↓, но дельта +{round(cvd_pct,1)}% — лимитный выкуп, цель POC {poc_p} (+{poc_d}%)) — лучше рассмотреть ЛОНГ")
 
-    if hits and ema_15m_note:
+    # #9 Сплетение EMA7/14/28 на 15m (пробой узла на объёме или сжатие при растущем ОИ)
+    if squeeze_signal:
+        if "ВЫХОД ИЗ СПЛЕТЕНИЯ" in squeeze_signal:
+            hits.append(squeeze_signal)
+        elif oi_chg_1h >= 0.3 or abs(whale_long - retail_long) >= 10.0:
+            hits.append(squeeze_signal)
+
+    if hits and ema_15m_note and not any("#9" in h for h in hits):
         hits.append(ema_15m_note)
 
     return hits, price_chg_1h, oi_chg_1h, retail_long, whale_long, vwap_val, vwap_diff, up_poc, dn_poc, cvd_4h_usd, cvd_pct, nd_usd
+
 
 
 
