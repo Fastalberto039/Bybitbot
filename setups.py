@@ -25,7 +25,7 @@ def calc_ema(values: list, period: int) -> float:
 
 def analyze_15m_ema(candles_15m: list, curr_price: float, oi_chg_1h: float, retail_long: float, whale_long: float, cvd_4h_usd: float):
     if not candles_15m or len(candles_15m) < 32:
-        return "", None
+        return "", None, None
     closes = [float(cl) for _, _, _, cl, *_ in candles_15m]
     vols = [float(v) for _, _, _, _, v, *_ in candles_15m]
 
@@ -51,15 +51,14 @@ def analyze_15m_ema(candles_15m: list, curr_price: float, oi_chg_1h: float, reta
     spread_prev = (prev_top - prev_bot) / prev_bot * 100 if prev_bot > 0 else 99.0
     dist_from_28 = (curr_price - ema28) / ema28 * 100 if ema28 > 0 else 0.0
     zone_l = f"{round(ema_bot, 6)}–{round(ema_top, 6)}"
+    ema_bounds = (ema_bot, ema_top)
 
     retail_short = 100.0 - retail_long
     whale_short = 100.0 - whale_long
     oi_sign = "+" if oi_chg_1h > 0 else ""
 
     squeeze_signal = None
-    # ЛОНГ: нужен непадающий ОИ (>= +0.1%) и цена внутри узла/выше
     long_ready = (retail_short >= 56.0 and whale_long >= 55.0) and (curr_price >= ema_bot * 0.997) and (oi_chg_1h >= 0.1)
-    # ШОРТ: ОИ может как расти (набор шортов), так и падать (слив лонгов толпы) при CVD < 0
     short_ready = (retail_long >= 56.0 and whale_short >= 55.0) and (curr_price <= ema_top * 1.003) and (cvd_4h_usd < 0)
 
     if (spread_now <= 0.85 or spread_prev <= 0.85) and (long_ready or short_ready):
@@ -84,7 +83,7 @@ def analyze_15m_ema(candles_15m: list, curr_price: float, oi_chg_1h: float, reta
     else:
         note = f"🔄 15m СЖАТИЕ внутри пучка EMA7/14/28 ({zone_l}) — пружина сжимается, ждать выход"
 
-    return note, squeeze_signal
+    return note, squeeze_signal, ema_bounds
 
 
 def calculate_vwap_bands(candles_15m: list, curr_price: float):
@@ -122,7 +121,7 @@ def calculate_poc_levels(candles: list, curr_price: float):
 def evaluate_all_9_setups(candles, oi_series, price, funding, retail_long, whale_long, candles_15m=None):
     hits = []
     if abs(funding) >= 0.09:
-        return hits, 0.0, 0.0, retail_long, whale_long, price, 0.0, None, None, 0.0, 0.0, 0.0
+        return hits, 0.0, 0.0, retail_long, whale_long, price, 0.0, None, None, 0.0, 0.0, 0.0, None
 
     retail_short = 100.0 - retail_long
     whale_short = 100.0 - whale_long
@@ -150,14 +149,14 @@ def evaluate_all_9_setups(candles, oi_series, price, funding, retail_long, whale
 
     vwap_val, vwap_diff, _, _, _ = calculate_vwap_bands(candles_15m or [], price)
     up_poc, dn_poc = calculate_poc_levels(candles, price)
-    ema_15m_note, squeeze_signal = analyze_15m_ema(candles_15m or [], price, oi_chg_1h, retail_long, whale_long, cvd_4h_usd)
+    ema_15m_note, squeeze_signal, ema_bounds = analyze_15m_ema(candles_15m or [], price, oi_chg_1h, retail_long, whale_long, cvd_4h_usd)
 
-    # #7 ШОРТ работает при ЛЮБОМ ОИ (и наборе шортов, и паническом закрытии лонгов при CVD < 0)
+    # #7 ШОРТ при любом ОИ и CVD < 0
     if retail_long >= 58.0 and whale_short >= 56.0 and cvd_4h_usd < 0:
         oi_state = "набор шортов ОИ↑" if oi_chg_1h >= 0 else "разгрузка лонгов ОИ↓"
         hits.append(f"🔴 #7 Перекос в ЛОНГ ({oi_state}, Толпа {round(retail_long,1)}% в лонгах против Китов {round(whale_short,1)}% в шортах) — лучше рассмотреть ШОРТ")
 
-    # #7 ЛОНГ требует растущего ОИ (>= +0.2%)
+    # #7 ЛОНГ при растущем ОИ (>= +0.2%)
     if oi_chg_1h >= 0.2 and retail_short >= 58.0 and whale_long >= 56.0:
         hits.append(f"🟢 #7 Перекос в ШОРТ + ОИ↑ (Толпа {round(retail_short,1)}% в шортах против Китов {round(whale_long,1)}% в лонгах) — лучше рассмотреть ЛОНГ")
 
@@ -165,7 +164,7 @@ def evaluate_all_9_setups(candles, oi_series, price, funding, retail_long, whale
     if squeeze_signal:
         hits.append(squeeze_signal)
 
-    # #10 Скрытый набор ОИ в боковике (размах <= 3.5% за 4ч, смещение <= 2.0% за 3ч, ОИ растёт)
+    # #10 Скрытый набор ОИ в боковике
     last_4 = candles[-4:]
     high_4h = max(h for _, h, _, _, _, *_ in last_4)
     low_4h = min(l for _, _, l, _, _, *_ in last_4)
@@ -185,7 +184,8 @@ def evaluate_all_9_setups(candles, oi_series, price, funding, retail_long, whale
     if hits and ema_15m_note and not any("#9" in h for h in hits):
         hits.append(ema_15m_note)
 
-    return hits, price_chg_1h, oi_chg_1h, retail_long, whale_long, vwap_val, vwap_diff, up_poc, dn_poc, cvd_4h_usd, cvd_pct, nd_usd
+    return hits, price_chg_1h, oi_chg_1h, retail_long, whale_long, vwap_val, vwap_diff, up_poc, dn_poc, cvd_4h_usd, cvd_pct, nd_usd, ema_bounds
+
 
 
 
