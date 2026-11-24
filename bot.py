@@ -5,7 +5,8 @@ from setups import evaluate_all_9_setups, fmt_usd
 
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 CHAT_ID = os.getenv("CHAT_ID")
-TOP_N_COINS = 40
+RANK_START = 50
+RANK_END = 150
 COOLDOWN_SEC = 7200
 CACHE_FILE = "sent_cache.json"
 WATCHLIST = ["APTUSDT", "ARBUSDT", "OPUSDT", "DOTUSDT", "ATOMUSDT", "ZROUSDT", "ZKUSDT", "STRKUSDT", "1000LUNCUSDT", "INITUSDT"]
@@ -74,12 +75,12 @@ async def get_universe(session, source):
         )
         if isinstance(tickers, list) and isinstance(premiums, list):
             f_map = {p["symbol"]: float(p.get("lastFundingRate", 0)) * 100 for p in premiums}
-            pairs = [t for t in tickers if is_valid_crypto(t["symbol"], allowed) and float(t.get("quoteVolume", 0)) >= 10_000_000]
-            by_vol = sorted(pairs, key=lambda x: float(x.get("quoteVolume", 0)), reverse=True)[:TOP_N_COINS]
-            by_mov = sorted(pairs, key=lambda x: abs(float(x.get("priceChangePercent", 0))), reverse=True)[:25]
-            by_fnd = sorted(pairs, key=lambda x: abs(f_map.get(x["symbol"], 0)), reverse=True)[:15]
-            extra = [x for x in pairs if x["symbol"] in WATCHLIST]
-            for item in by_vol + by_mov + by_fnd + extra:
+            pairs = [t for t in tickers if is_valid_crypto(t["symbol"], allowed) and float(t.get("quoteVolume", 0)) >= 3_000_000]
+            ranked = sorted(pairs, key=lambda x: float(x.get("quoteVolume", 0)), reverse=True)
+            top_50_syms = {x["symbol"] for x in ranked[:RANK_START]}
+            mid_cap = ranked[RANK_START:RANK_END]
+            extra = [x for x in ranked if x["symbol"] in WATCHLIST and x["symbol"] not in top_50_syms]
+            for item in mid_cap + extra:
                 sym = item["symbol"]
                 if sym not in seen:
                     seen.add(sym)
@@ -88,12 +89,12 @@ async def get_universe(session, source):
                 return universe
     data = await fetch_bybit(session, "/v5/market/tickers", {"category": "linear"})
     if data:
-        pairs = [x for x in data["result"]["list"] if is_valid_crypto(x["symbol"]) and float(x.get("turnover24h", 0)) >= 10_000_000]
-        by_vol = sorted(pairs, key=lambda x: float(x.get("turnover24h", 0)), reverse=True)[:TOP_N_COINS]
-        by_mov = sorted(pairs, key=lambda x: abs(float(x.get("price24hPcnt", 0))), reverse=True)[:25]
-        by_fnd = sorted(pairs, key=lambda x: abs(float(x.get("fundingRate", 0))), reverse=True)[:15]
-        extra = [x for x in pairs if x["symbol"] in WATCHLIST]
-        for item in by_vol + by_mov + by_fnd + extra:
+        pairs = [x for x in data["result"]["list"] if is_valid_crypto(x["symbol"]) and float(x.get("turnover24h", 0)) >= 3_000_000]
+        ranked = sorted(pairs, key=lambda x: float(x.get("turnover24h", 0)), reverse=True)
+        top_50_syms = {x["symbol"] for x in ranked[:RANK_START]}
+        mid_cap = ranked[RANK_START:RANK_END]
+        extra = [x for x in ranked if x["symbol"] in WATCHLIST and x["symbol"] not in top_50_syms]
+        for item in mid_cap + extra:
             sym = item["symbol"]
             if sym not in seen:
                 seen.add(sym)
@@ -176,7 +177,7 @@ def format_alert(item, hits, p_chg, oi_chg, rl, wl, vwap_val, vwap_diff, up_poc,
     src = "Binance Futures" if item["source"] != "BYBIT" else "Bybit Futures"
     has_l = any("рассмотреть ЛОНГ" in h for h in hits)
     has_s = any("рассмотреть ШОРТ" in h for h in hits)
-    verdict = "🟢 <b>ИТОГ: Лучше рассмотреть ЛОНГ</b>" if (has_l and not has_s) else ("🔴 <b>ИТОГ: Лучше рассмотреть ШОРТ</b>" if (has_s and not has_l) else "🪢 <b>ИТОГ: Пересечение/сближение EMA7/14/28</b>")
+    verdict = "🟢 <b>ИТОГ: Лучше рассмотреть ЛОНГ</b>" if (has_l and not has_s) else ("🔴 <b>ИТОГ: Лучше рассмотреть ШОРТ</b>" if (has_s and not has_l) else "🪢 <b>ИТОГ: Пересечение EMA / Набор ОИ</b>")
     up_p, up_d = up_poc if up_poc else (None, None)
     dn_p, dn_d = dn_poc if dn_poc else (None, None)
     pocs = ([f"⬆️ {up_p} (+{up_d}%)"] if up_p else []) + ([f"⬇️ {dn_p} (-{dn_d}%)"] if dn_p else [])
@@ -189,7 +190,7 @@ def format_alert(item, hits, p_chg, oi_chg, rl, wl, vwap_val, vwap_diff, up_poc,
     cg_url = f"https://coinglass.com_{item['symbol']}"
     crowd_txt, whale_txt, cvd_txt, nd_txt = explain_context(p_chg, oi_chg, rl, wl, cvd_usd, nd_usd, item["funding"])
     lines = [
-        f"⚡️ <b>СИГНАЛ: {item['symbol']} (15m/1Ч)</b> | {src}", verdict,
+        f"⚡️ <b>СИГНАЛ: {item['symbol']} (15m/1Ч | Топ 50-150)</b> | {src}", verdict,
         f"💰 <b>Цена:</b> {item['price']} ({round(p_chg, 2)}% за 1ч)",
         f"🎯 <b>Цели POC:</b> {' | '.join(pocs) if pocs else 'нет близких'}",
         f"📈 <b>ОИ:</b> {oi_sign}{round(oi_chg, 2)}% ({oi_note}) | 💸 <b>Фандинг:</b> {round(item['funding'], 4)}%",
@@ -235,12 +236,13 @@ async def scan_market():
         universe = await get_universe(session, source)
         sem = asyncio.Semaphore(8)
         await asyncio.gather(*(process_symbol(sem, session, bot, item, cache, lock, stats) for item in universe))
-        print(f"Источник: {source} | Монет: {len(universe)} | Найдено #9: {stats['ema9']} | Отправлено: {stats['sent']}")
+        print(f"Источник: {source} | Монет (50-150): {len(universe)} | Найдено #9: {stats['ema9']} | Отправлено: {stats['sent']}")
     save_cache(cache)
     await bot.session.close()
 
 
 asyncio.run(scan_market())
+
 
 
 
