@@ -117,6 +117,7 @@ def calculate_poc_levels(candles: list, curr_price: float):
 def evaluate_all_9_setups(candles, oi_series, price, funding, retail_long, whale_long, candles_15m=None):
     hits = []
     retail_short = 100.0 - retail_long
+    whale_short = 100.0 - whale_long
     last_c = candles[-1]
     o1, h1, l1, c1, v1 = last_c[:5]
     o3 = float(next(iter(candles[-3])))
@@ -133,7 +134,9 @@ def evaluate_all_9_setups(candles, oi_series, price, funding, retail_long, whale
     cvd_pct = (cvd_4h_usd / vol_4h_usd * 100) if vol_4h_usd > 0 else 0.0
 
     oi_curr, oi_1h_ago = oi_series[-1], oi_series[-2]
+    oi_3h_ago = oi_series[-4] if len(oi_series) >= 4 else oi_1h_ago
     oi_chg_1h = (oi_curr - oi_1h_ago) / oi_1h_ago * 100 if oi_1h_ago else 0
+    oi_chg_3h = (oi_curr - oi_3h_ago) / oi_3h_ago * 100 if oi_3h_ago else 0
     oi_usd = oi_curr if oi_curr > 100_000 else oi_curr * price
     nd_usd = oi_usd * ((whale_long - (100.0 - whale_long)) / 100.0)
 
@@ -171,6 +174,26 @@ def evaluate_all_9_setups(candles, oi_series, price, funding, retail_long, whale
     # #9 Пересечение/сближение EMA7/14/28 + перекос Толпа против Китов + значение ОИ
     if squeeze_signal:
         hits.append(squeeze_signal)
+
+    # #10 Скрытый набор ОИ в узком боковике (цена стоит <= 2.0% за 4ч, а ОИ уверенно растёт)
+    last_4 = candles[-4:]
+    high_4h = max(h for _, h, _, _, _, *_ in last_4)
+    low_4h = min(l for _, _, l, _, _, *_ in last_4)
+    range_4h_pct = (high_4h - low_4h) / low_4h * 100 if low_4h > 0 else 99.0
+    if range_4h_pct <= 2.0 and abs(price_chg_3h) <= 1.0 and (oi_chg_1h >= 1.2 or oi_chg_3h >= 2.5):
+        if whale_long >= 54.0 and retail_short >= 54.0:
+            dir_hint = "перевес Китов в ЛОНГ — лучше рассмотреть ЛОНГ"
+            ico = "🟢"
+        elif whale_short >= 54.0 and retail_long >= 54.0:
+            dir_hint = "перевес Китов в ШОРТ — лучше рассмотреть ШОРТ"
+            ico = "🔴"
+        else:
+            dir_hint = "ждать пробой границ коридора на объёме"
+            ico = "📦"
+        hits.append(
+            f"{ico} #10 Набор ОИ в боковике (коридор {round(low_4h,6)}–{round(high_4h,6)}, размах {round(range_4h_pct,2)}%, "
+            f"ОИ +{round(oi_chg_1h,2)}% за 1ч / +{round(oi_chg_3h,2)}% за 3ч) — {dir_hint}"
+        )
 
     if hits and ema_15m_note and not any("#9" in h for h in hits):
         hits.append(ema_15m_note)
