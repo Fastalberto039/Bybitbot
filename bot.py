@@ -9,7 +9,7 @@ CHAT_ID = os.getenv("CHAT_ID")
 TOP_N_COINS = 40
 COOLDOWN_SEC = 7200
 CACHE_FILE = "sent_cache.json"
-WATCHLIST = ["APTUSDT", "ARBUSDT", "OPUSDT", "DOTUSDT", "ATOMUSDT", "ZROUSDT", "ZKUSDT", "STRKUSDT"]
+WATCHLIST = ["APTUSDT", "ARBUSDT", "OPUSDT", "DOTUSDT", "ATOMUSDT", "ZROUSDT", "ZKUSDT", "STRKUSDT", "1000LUNCUSDT", "INITUSDT"]
 STOCK_BLACKLIST = {"XAUUSDT", "XAGUSDT", "NVDAUSDT", "TSLAUSDT", "AAPLUSDT", "COINUSDT", "MSTRUSDT", "QQQUSDT", "SPYUSDT", "GLDUSDT", "SLVUSDT"}
 BINANCE_URLS = ["https://binance.com", "https://binance.com", "https://binance.me"]
 BYBIT_URLS = ["https://bybit.com", "https://bytick.com"]
@@ -77,7 +77,7 @@ async def get_universe(session, source):
             f_map = {p["symbol"]: float(p.get("lastFundingRate", 0)) * 100 for p in premiums}
             pairs = [t for t in tickers if is_valid_crypto(t["symbol"], allowed) and float(t.get("quoteVolume", 0)) >= 10_000_000]
             by_vol = sorted(pairs, key=lambda x: float(x.get("quoteVolume", 0)), reverse=True)[:TOP_N_COINS]
-            by_mov = sorted(pairs, key=lambda x: abs(float(x.get("priceChangePercent", 0))), reverse=True)[:15]
+            by_mov = sorted(pairs, key=lambda x: abs(float(x.get("priceChangePercent", 0))), reverse=True)[:25]
             by_fnd = sorted(pairs, key=lambda x: abs(f_map.get(x["symbol"], 0)), reverse=True)[:15]
             extra = [x for x in pairs if x["symbol"] in WATCHLIST]
             for item in by_vol + by_mov + by_fnd + extra:
@@ -91,7 +91,7 @@ async def get_universe(session, source):
     if data:
         pairs = [x for x in data["result"]["list"] if is_valid_crypto(x["symbol"]) and float(x.get("turnover24h", 0)) >= 10_000_000]
         by_vol = sorted(pairs, key=lambda x: float(x.get("turnover24h", 0)), reverse=True)[:TOP_N_COINS]
-        by_mov = sorted(pairs, key=lambda x: abs(float(x.get("price24hPcnt", 0))), reverse=True)[:15]
+        by_mov = sorted(pairs, key=lambda x: abs(float(x.get("price24hPcnt", 0))), reverse=True)[:25]
         by_fnd = sorted(pairs, key=lambda x: abs(float(x.get("fundingRate", 0))), reverse=True)[:15]
         extra = [x for x in pairs if x["symbol"] in WATCHLIST]
         for item in by_vol + by_mov + by_fnd + extra:
@@ -143,10 +143,10 @@ async def get_market_history(session, symbol, source):
 
 def explain_context(p_chg, oi_chg, rl, wl, cvd_usd, nd_usd, funding):
     rs = 100.0 - rl
-    if rl >= 62.0:
+    if rl >= 58.0:
         crowd_txt = f"{round(rl,1)}% ЛОНГ (перегруз лонгов — люди верят в рост)"
-    elif rs >= 62.0:
-        crowd_txt = f"{round(rs,1)}% ШОРТ (толпа паникует и шортит — топливо для сквиза)"
+    elif rs >= 58.0:
+        crowd_txt = f"{round(rs,1)}% ШОРТ (толпа шортит — топливо для сквиза)"
     else:
         crowd_txt = f"{round(rl,1)}% ЛОНГ / {round(rs,1)}% ШОРТ (баланс)"
     whale_txt = f"{round(wl,1)}% ЛОНГ" if wl >= 54.0 else (f"{round(100-wl,1)}% ШОРТ" if wl <= 46.0 else "50/50 нейтрально")
@@ -168,7 +168,7 @@ def explain_context(p_chg, oi_chg, rl, wl, cvd_usd, nd_usd, funding):
         else:
             nd_txt = f"{fmt_usd(nd_usd)} (ND ниже 0 — доминируют шорты)"
     else:
-        if p_chg < 0 and rl >= 62.0:
+        if p_chg < 0 and rl >= 58.0:
             nd_txt = f"{fmt_usd(nd_usd)} (ND выше 0: Цена↓ + толпа в лонгах → ловят ножи, без объёма не лезть)"
         else:
             nd_txt = f"{fmt_usd(nd_usd)} (ND выше 0 — доминируют лонги)"
@@ -177,9 +177,9 @@ def explain_context(p_chg, oi_chg, rl, wl, cvd_usd, nd_usd, funding):
 
 def format_alert(item, hits, p_chg, oi_chg, rl, wl, vwap_val, vwap_diff, up_poc, dn_poc, cvd_usd, cvd_pct, nd_usd, candles):
     src = "Binance Futures" if item["source"] != "BYBIT" else "Bybit Futures"
-    has_l = any("рассмотреть ЛОНГ" in h or "ЛОНГ при откупе" in h for h in hits)
-    has_s = any("рассмотреть ШОРТ" in h or "ШОРТ от сопротивления" in h for h in hits)
-    verdict = "🟢 <b>ИТОГ: Лучше рассмотреть ЛОНГ</b>" if (has_l and not has_s) else ("🔴 <b>ИТОГ: Лучше рассмотреть ШОРТ</b>" if (has_s and not has_l) else "⚖️ <b>ИТОГ: Смешанный сигнал (ждать подтверждения на 15m)</b>")
+    has_l = any("рассмотреть ЛОНГ" in h or "ЛОНГ, стоп за узел" in h for h in hits)
+    has_s = any("рассмотреть ШОРТ" in h or "ШОРТ, стоп за узел" in h for h in hits)
+    verdict = "🟢 <b>ИТОГ: Лучше рассмотреть ЛОНГ</b>" if (has_l and not has_s) else ("🔴 <b>ИТОГ: Лучше рассмотреть ШОРТ</b>" if (has_s and not has_l) else "🪢 <b>ИТОГ: Пружина сжата — ждём пробой узла EMA</b>")
     up_p, up_d = up_poc if up_poc else (None, None)
     dn_p, dn_d = dn_poc if dn_poc else (None, None)
     pocs = ([f"⬆️ {up_p} (+{up_d}%)"] if up_p else []) + ([f"⬇️ {dn_p} (-{dn_d}%)"] if dn_p else [])
@@ -211,16 +211,19 @@ def format_alert(item, hits, p_chg, oi_chg, rl, wl, vwap_val, vwap_diff, up_poc,
 async def process_symbol(sem, session, bot, item, cache, lock):
     async with sem:
         sym = item["symbol"]
-        if time.time() - cache.get(sym, 0) < COOLDOWN_SEC:
-            return
         candles, c15, oi_s, rl, wl = await get_market_history(session, sym, item["source"])
         if not candles or not oi_s:
             return
         hits, p_chg, oi_chg, rl, wl, vwap_val, vwap_diff, up_poc, dn_poc, cvd_usd, cvd_pct, nd_usd = evaluate_all_9_setups(candles, oi_s, item["price"], item["funding"], rl, wl, c15)
-        if hits:
-            await bot.send_message(CHAT_ID, format_alert(item, hits, p_chg, oi_chg, rl, wl, vwap_val, vwap_diff, up_poc, dn_poc, cvd_usd, cvd_pct, nd_usd, candles), parse_mode="HTML", disable_web_page_preview=True)
-            async with lock:
-                cache[sym] = time.time()
+        if not hits:
+            return
+        is_ema9 = any("#9" in h for h in hits)
+        cache_key = f"{sym}_EMA9" if is_ema9 else sym
+        if time.time() - cache.get(cache_key, 0) < COOLDOWN_SEC:
+            return
+        await bot.send_message(CHAT_ID, format_alert(item, hits, p_chg, oi_chg, rl, wl, vwap_val, vwap_diff, up_poc, dn_poc, cvd_usd, cvd_pct, nd_usd, candles), parse_mode="HTML", disable_web_page_preview=True)
+        async with lock:
+            cache[cache_key] = time.time()
 
 
 async def scan_market():
@@ -237,6 +240,7 @@ async def scan_market():
 
 
 asyncio.run(scan_market())
+
 
 
 
