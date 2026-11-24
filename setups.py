@@ -51,8 +51,7 @@ def analyze_15m_ema(candles_15m: list, curr_price: float):
     dist_from_28 = (curr_price - ema28) / ema28 * 100 if ema28 > 0 else 0.0
     zone_l = f"{round(ema_bot, 6)}–{round(ema_top, 6)}"
 
-        squeeze_signal = None
-    # Проверка сплетения EMA7/14/28 в узкий пучок (<= 0.85%)
+    squeeze_signal = None
     if spread_prev <= 0.85 or spread_now <= 0.85:
         if curr_price > ema_top and prev_close <= prev_top * 1.004 and last_vol >= avg_vol * 1.0 and dist_from_28 <= 1.8:
             squeeze_signal = f"🟢 #9 ВЫХОД ИЗ СПЛЕТЕНИЯ EMA7/14/28 ВВЕРХ (узел {zone_l}, объём подтверждён — ЛОНГ, стоп за узел)"
@@ -141,20 +140,17 @@ def evaluate_all_9_setups(candles, oi_series, price, funding, retail_long, whale
     up_poc, dn_poc = calculate_poc_levels(candles, price)
     ema_15m_note, squeeze_signal = analyze_15m_ema(candles_15m or [], price)
 
-    # #3 Выкуп пролива от суточного дна
     if price_chg_3h <= -3.0 and l1 <= low_24h * 1.004 and v1 >= avg_vol_20 * 1.6 and ((c1 > o1) or (lower_wick > body1 * 1.2)):
         poc_p, poc_d = up_poc if up_poc else (None, None)
         poc_t = f", цель POC {poc_p} (+{poc_d}%)" if poc_p else ""
         hits.append(f"🟢 #3 Выкуп пролива от дна (объём + откуп{poc_t}) — лучше рассмотреть ЛОНГ")
 
-    # #7 Чистые «Ножницы» (Толпа против Китов)
     if (retail_long >= 58.0 and whale_long <= 45.0) or (retail_long >= 65.0 and whale_long <= 48.0):
         hits.append(f"🔴 #7 Перекос в ЛОНГ (Толпа {round(retail_long,1)}% в лонгах против Китов {round(100-whale_long,1)}% в шортах) — лучше рассмотреть ШОРТ")
 
     if (retail_short >= 58.0 and whale_long >= 55.0) or (retail_short >= 65.0 and whale_long >= 52.0):
         hits.append(f"🟢 #7 Перекос в ШОРТ (Толпа {round(retail_short,1)}% в шортах против Китов {round(whale_long,1)}% в лонгах) — лучше рассмотреть ЛОНГ")
 
-    # #8 Дивергенция CVD
     if price_chg_3h >= 2.5 and cvd_pct <= -6.0 and dn_poc:
         poc_p, poc_d = dn_poc
         hits.append(f"🔴 #8 Дивергенция CVD (Цена↑, но дельта {round(cvd_pct,1)}% — скрытые продажи, цель POC {poc_p} (-{poc_d}%)) — лучше рассмотреть ШОРТ")
@@ -163,7 +159,6 @@ def evaluate_all_9_setups(candles, oi_series, price, funding, retail_long, whale
         poc_p, poc_d = up_poc
         hits.append(f"🟢 #8 Дивергенция CVD (Цена↓, но дельта +{round(cvd_pct,1)}% — лимитный выкуп, цель POC {poc_p} (+{poc_d}%)) — лучше рассмотреть ЛОНГ")
 
-    # #9 Сплетение EMA7/14/28 на 15m (пробой узла на объёме или сжатие при растущем ОИ)
     if squeeze_signal:
         if "ВЫХОД ИЗ СПЛЕТЕНИЯ" in squeeze_signal:
             hits.append(squeeze_signal)
@@ -174,6 +169,7 @@ def evaluate_all_9_setups(candles, oi_series, price, funding, retail_long, whale
         hits.append(ema_15m_note)
 
     return hits, price_chg_1h, oi_chg_1h, retail_long, whale_long, vwap_val, vwap_diff, up_poc, dn_poc, cvd_4h_usd, cvd_pct, nd_usd
+
 
 
 
