@@ -47,28 +47,26 @@ def analyze_15m_ema(candles_15m: list, curr_price: float, oi_chg_1h: float, regi
 
     signal = None
 
-    # 1. РЕЖИМ: СЛОМ ТРЕНДА (#12) — самый ранний разворот на реальных деньгах
-    if regime == "REV_UP" and ema7 > ema14 > ema28 and abs(curr_price - ema14) / ema14 * 100 <= 0.4 and oi_chg_1h >= 1.5 and cvd_4h_usd >= 150_000:
+    # 1. #12 СЛОМ ТРЕНДА (ранний разворот на притоке ОИ и CVD)
+    if regime == "REV_UP" and ema7 > ema14 > ema28 and abs(curr_price - ema14) / ema14 * 100 <= 0.45 and oi_chg_1h >= 1.2 and cvd_4h_usd >= 120_000:
         signal = f"🔄 #12 СЛОМ ТРЕНДА ВВЕРХ (пробой 1Ч EMA28 + ретест 15m EMA14 {round(ema14, 6)}) — лучше рассмотреть ЛОНГ (ОИ +{round(oi_chg_1h, 2)}%, CVD {fmt_usd(cvd_4h_usd)})"
-    elif regime == "REV_DOWN" and ema7 < ema14 < ema28 and abs(curr_price - ema14) / ema14 * 100 <= 0.4 and oi_chg_1h >= 1.5 and cvd_4h_usd <= -150_000:
+    elif regime == "REV_DOWN" and ema7 < ema14 < ema28 and abs(curr_price - ema14) / ema14 * 100 <= 0.45 and oi_chg_1h >= 1.2 and cvd_4h_usd <= -120_000:
         signal = f"🔄 #12 СЛОМ ТРЕНДА ВНИЗ (пробой 1Ч EMA28 + ретест 15m EMA14 {round(ema14, 6)}) — лучше рассмотреть ШОРТ (ОИ +{round(oi_chg_1h, 2)}%, CVD {fmt_usd(cvd_4h_usd)})"
 
-    # 2. РЕЖИМ: ВОСХОДЯЩИЙ ТРЕНД — только откаты к EMA14 с притоком ОИ >= +0.8%, CVD >= +80K$ и шортами толпы >= 55%
-    elif regime == "UP":
-        if ema7 > ema14 > ema28 and abs(curr_price - ema14) / ema14 * 100 <= 0.25 and last_vol < avg_vol and oi_chg_1h >= 0.8 and cvd_4h_usd >= 80_000 and retail_short >= 55.0:
-            signal = f"🎯 #11 ОТКАТ ПО ТРЕНДУ ВВЕРХ на 15m EMA14 ({round(ema14, 6)}) — лучше рассмотреть ЛОНГ (ОИ +{round(oi_chg_1h, 2)}%, CVD {fmt_usd(cvd_4h_usd)}, Толпа {round(retail_short,1)}% ШОРТ)"
+    # 2. #11 ОТКАТ ПО СТАРШЕМУ ТРЕНДУ на 15m EMA14
+    elif regime == "UP" and ema7 > ema14 > ema28 and abs(curr_price - ema14) / ema14 * 100 <= 0.30 and last_vol < avg_vol and oi_chg_1h >= 0.7 and cvd_4h_usd >= 70_000 and retail_short >= 55.0:
+        signal = f"🎯 #11 ОТКАТ ПО ТРЕНДУ ВВЕРХ на 15m EMA14 ({round(ema14, 6)}) — лучше рассмотреть ЛОНГ (ОИ +{round(oi_chg_1h, 2)}%, CVD {fmt_usd(cvd_4h_usd)}, Толпа {round(retail_short,1)}% ШОРТ)"
+    elif regime == "DOWN" and ema7 < ema14 < ema28 and abs(curr_price - ema14) / ema14 * 100 <= 0.30 and last_vol < avg_vol and oi_chg_1h >= 0.7 and cvd_4h_usd <= -70_000 and retail_long >= 55.0:
+        signal = f"🎯 #11 ОТКАТ ПО ТРЕНДУ ВНИЗ под 15m EMA14 ({round(ema14, 6)}) — лучше рассмотреть ШОРТ (ОИ +{round(oi_chg_1h, 2)}%, CVD {fmt_usd(cvd_4h_usd)}, Толпа {round(retail_long,1)}% ЛОНГ)"
 
-    # 3. РЕЖИМ: НИСХОДЯЩИЙ ТРЕНД — только откаты под EMA14 с притоком ОИ >= +0.8%, CVD <= -80K$ и лонгами толпы >= 55%
-    elif regime == "DOWN":
-        if ema7 < ema14 < ema28 and abs(curr_price - ema14) / ema14 * 100 <= 0.25 and last_vol < avg_vol and oi_chg_1h >= 0.8 and cvd_4h_usd <= -80_000 and retail_long >= 55.0:
-            signal = f"🎯 #11 ОТКАТ ПО ТРЕНДУ ВНИЗ под 15m EMA14 ({round(ema14, 6)}) — лучше рассмотреть ШОРТ (ОИ +{round(oi_chg_1h, 2)}%, CVD {fmt_usd(cvd_4h_usd)}, Толпа {round(retail_long,1)}% ЛОНГ)"
-
-    # 4. РЕЖИМ: БОКОВИК (ФЛЭТ) — только сверхсжатие EMA <= 0.55% с набором ОИ >= +1.5% против толпы >= 60%
-    elif regime == "FLAT" and spread_now <= 0.55 and oi_chg_1h >= 1.5:
-        if retail_short >= 60.0 and cvd_4h_usd >= 60_000 and curr_price >= ema_bot:
-            signal = f"📦 #9 СЖАТИЕ ВО ФЛЭТЕ → ЛОНГ (зона {zone_l}, ОИ +{round(oi_chg_1h, 2)}%, CVD {fmt_usd(cvd_4h_usd)}, Толпа {round(retail_short,1)}% ШОРТ)"
-        elif retail_long >= 60.0 and cvd_4h_usd <= -60_000 and curr_price <= ema_top:
-            signal = f"📦 #9 СЖАТИЕ ВО ФЛЭТЕ → ШОРТ (зона {zone_l}, ОИ +{round(oi_chg_1h, 2)}%, CVD {fmt_usd(cvd_4h_usd)}, Толпа {round(retail_long,1)}% ЛОНГ)"
+    # 3. #9 УНИВЕРСАЛЬНОЕ ПЕРЕПЛЕТЕНИЕ EMA7/14/28 (в любой фазе при притоке ОИ >= +0.5%, вход ТОЛЬКО по факту пробоя краёв!)
+    if not signal and spread_now <= 0.55 and oi_chg_1h >= 0.5:
+        brk_up = round(ema_top * 1.002, 6)
+        brk_dn = round(ema_bot * 0.998, 6)
+        signal = (
+            f"🪢 #9 ТУГОЕ ПЕРЕПЛЕТЕНИЕ EMA7/14/28 (ширина {round(spread_now, 2)}%, ОИ {oi_sign}{round(oi_chg_1h, 2)}%) — "
+            f"внутри НЕ входить! Ждать закрытие 15m свечи на объёме: ЛОНГ выше {brk_up} | ШОРТ ниже {brk_dn}"
+        )
 
     if curr_price > ema_top:
         note = f"🚀 15m выше пучка EMA ({zone_l}, +{round(dist_from_28, 2)}%)"
@@ -108,7 +106,6 @@ def evaluate_all_9_setups(candles, oi_series, price, funding, retail_long, whale
     ema48_1h = calc_ema(closes_1h, 48)
     ema_gap_pct = abs(ema28_1h - ema48_1h) / ema48_1h * 100 if ema48_1h > 0 else 0.0
 
-    # ДЕТЕКТОР 3 РЕЖИМОВ РЫНКА (+ переходный слом тренда)
     if ema_gap_pct < 0.45:
         regime = "FLAT"
         regime_label = "📦 Режим рынка: БОКОВИК (ФЛЭТ)"
@@ -153,17 +150,16 @@ def evaluate_all_9_setups(candles, oi_series, price, funding, retail_long, whale
         hits.append(regime_label)
         hits.append(main_signal)
 
-    # Флаг по тренду (#10) — только при мощном наборе ОИ >= +1.5% и CVD >= 80K$
     last_4 = candles[-4:]
     high_4h = max(float(h) for _, h, _, _, *_ in last_4)
     low_4h = min(float(l) for _, _, l, _, *_ in last_4)
     range_4h_pct = (high_4h - low_4h) / low_4h * 100 if low_4h > 0 else 99.0
-    if range_4h_pct <= 2.8 and abs(price_chg_3h) <= 1.5 and (oi_chg_1h >= 1.5 or oi_chg_3h >= 3.0):
-        if regime == "UP" and cvd_4h_usd >= 80_000:
+    if range_4h_pct <= 2.8 and abs(price_chg_3h) <= 1.5 and (oi_chg_1h >= 1.3 or oi_chg_3h >= 2.8):
+        if regime == "UP" and cvd_4h_usd >= 70_000:
             if not hits:
                 hits.append(regime_label)
             hits.append(f"🟢 #10 Бычий флаг по тренду (коридор {round(low_4h,6)}–{round(high_4h,6)}, ОИ +{round(oi_chg_1h,2)}%, CVD {fmt_usd(cvd_4h_usd)}) — лучше рассмотреть ЛОНГ")
-        elif regime == "DOWN" and cvd_4h_usd <= -80_000:
+        elif regime == "DOWN" and cvd_4h_usd <= -70_000:
             if not hits:
                 hits.append(regime_label)
             hits.append(f"🔴 #10 Медвежий флаг по тренду (коридор {round(low_4h,6)}–{round(high_4h,6)}, ОИ +{round(oi_chg_1h,2)}%, CVD {fmt_usd(cvd_4h_usd)}) — лучше рассмотреть ШОРТ")
@@ -172,6 +168,7 @@ def evaluate_all_9_setups(candles, oi_series, price, funding, retail_long, whale
         hits.append(ema_15m_note)
 
     return hits, price_chg_1h, oi_chg_1h, retail_long, whale_long, price, 0.0, up_poc, dn_poc, cvd_4h_usd, cvd_pct, nd_usd, ema_bounds
+
 
 
 
