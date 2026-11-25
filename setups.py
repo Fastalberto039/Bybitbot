@@ -28,51 +28,59 @@ def detect_15m_trendline(candles_15m: list, curr_price: float):
         return None, 0.0
     data = candles_15m[-37:-1]
     n = len(data)
-    highs = [float(x[1]) for x in data]
-    lows = [float(x[2]) for x in data]
-    closes = [float(x[3]) for x in data]
+    highs = [float(h) for _, h, _, _, *_ in data]
+    lows = [float(l) for _, _, l, _, *_ in data]
+    closes = [float(cl) for _, _, _, cl, *_ in data]
     sh, sl = [], []
     for i in range(2, n - 2):
-        if highs[i] > highs[i-1] and highs[i] >= highs[i-2] and highs[i] > highs[i+1] and highs[i] >= highs[i+2]:
+        if highs[i] > highs[i - 1] and highs[i] >= highs[i - 2] and highs[i] > highs[i + 1] and highs[i] >= highs[i + 2]:
             sh.append((i, highs[i]))
-        if lows[i] < lows[i-1] and lows[i] <= lows[i-2] and lows[i] < lows[i+1] and lows[i] <= lows[i+2]:
+        if lows[i] < lows[i - 1] and lows[i] <= lows[i - 2] and lows[i] < lows[i + 1] and lows[i] <= lows[i + 2]:
             sl.append((i, lows[i]))
     if len(sh) >= 2:
         (i1, p1), (i2, p2) = sh[-2], sh[-1]
         if i2 - i1 >= 4 and p2 < p1:
             slope = (p2 - p1) / (i2 - i1)
             lvl = p2 + slope * (n - i2)
-            if all(closes[k] <= (p2 + slope * (k - i2)) * 1.0025 for k in range(i2 + 1, n - 1)):
-                if lvl > 0 and 0 < (curr_price - lvl) / lvl * 100 <= 1.2:
+            if all(closes[k] <= (p2 + slope * (k - i2)) * 1.003 for k in range(i2 + 1, n - 1)):
+                dist = (curr_price - lvl) / lvl * 100 if lvl > 0 else 99.0
+                if lvl > 0 and -0.15 <= dist <= 1.8:
                     return "LONG", lvl
     if len(sl) >= 2:
         (i1, p1), (i2, p2) = sl[-2], sl[-1]
         if i2 - i1 >= 4 and p2 > p1:
             slope = (p2 - p1) / (i2 - i1)
             lvl = p2 + slope * (n - i2)
-            if all(closes[k] >= (p2 + slope * (k - i2)) * 0.9975 for k in range(i2 + 1, n - 1)):
-                if lvl > 0 and 0 < (lvl - curr_price) / lvl * 100 <= 1.2:
+            if all(closes[k] >= (p2 + slope * (k - i2)) * 0.997 for k in range(i2 + 1, n - 1)):
+                dist = (lvl - curr_price) / lvl * 100 if lvl > 0 else 99.0
+                if lvl > 0 and -0.15 <= dist <= 1.8:
                     return "SHORT", lvl
     return None, 0.0
+
+
 def analyze_setup_13(c15: list, c5: list, price: float, oi_1h: float, cvd: float, rl: float):
-    if not c5 or len(c5) < 8 or oi_1h < 0.6:
+    if not c5 or len(c5) < 9 or oi_1h < 0.6:
         return None, None
     side, lvl = detect_15m_trendline(c15, price)
     if not side:
         return None, None
-    o5, _, _, cl5, v5 = [float(x) for x in c5[-2][:5]]
-    ma5 = sum(float(x[4]) for x in c5[-7:-2]) / 5.0
-    if ma5 <= 0 or (v5 / ma5) < 1.6:
+    ma5 = sum(float(v) for _, _, _, _, v, *_ in c5[-8:-3]) / 5.0
+    if ma5 <= 0:
+        return None, None
+    c_prev, c_last = c5[-3], c5[-2]
+    o_p, _, _, cl_p, v_p, *_ = [float(x) for x in c_prev]
+    o_l, _, _, cl_l, v_l, *_ = [float(x) for x in c_last]
+    use_last = v_l >= v_p
+    o5, cl5, v5 = (o_l, cl_l, v_l) if use_last else (o_p, cl_p, v_p)
+    if (v5 / ma5) < 1.6:
         return None, None
     mult, rs = round(v5 / ma5, 1), 100.0 - rl
-    if side == "LONG" and cl5 > o5 and cvd >= 50_000 and rs >= 55.0:
+    if side == "LONG" and cl5 > o5 and cvd >= 25_000 and rs >= 52.0:
         return f"⚡ #13 ПРОБОЙ 15m НАКЛОННОЙ ({round(lvl, 6)}) + 5m объём {mult}x MA5 — лучше рассмотреть ЛОНГ (ОИ +{round(oi_1h, 2)}%, CVD {fmt_usd(cvd)}, Толпа {round(rs, 1)}% ШОРТ)", (lvl * 0.996, lvl)
-    if side == "SHORT" and cl5 < o5 and cvd <= -50_000 and rl >= 55.0:
+    if side == "SHORT" and cl5 < o5 and cvd <= -25_000 and rl >= 52.0:
         return f"⚡ #13 ПРОБОЙ 15m НАКЛОННОЙ ({round(lvl, 6)}) + 5m объём {mult}x MA5 — лучше рассмотреть ШОРТ (ОИ +{round(oi_1h, 2)}%, CVD {fmt_usd(cvd)}, Толпа {round(rl, 1)}% ЛОНГ)", (lvl, lvl * 1.004)
     return None, None
 
-
-def analyze_15m_ema(candles_15m: list, curr_price: float, oi_chg_1h: float, regime: str, cvd_4h_usd: float, retail_long: float):
     if not candles_15m or len(candles_15m) < 32:
         return "", None, None
     closes = [float(cl) for _, _, _, cl, *_ in candles_15m]
