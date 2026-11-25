@@ -7,7 +7,7 @@ RANK_START, RANK_END, MIN_VOL_USD, COOLDOWN_SEC = 20, 250, 8_000_000, 7200
 CACHE_FILE = "sent_cache.json"
 WATCHLIST = ["APTUSDT", "ARBUSDT", "OPUSDT", "DOTUSDT", "ATOMUSDT", "ZROUSDT", "ZKUSDT", "STRKUSDT", "1000LUNCUSDT", "INITUSDT"]
 STOCK_BLACKLIST = {"XAUUSDT", "XAGUSDT", "NVDAUSDT", "TSLAUSDT", "AAPLUSDT", "COINUSDT", "MSTRUSDT", "QQQUSDT", "SPYUSDT", "GLDUSDT", "SLVUSDT"}
-BINANCE_URLS = ["https://binance.com", "https://binance.com", "https://binance.me"]
+BINANCE_URLS = ["https://binance.com", "https://binance.com", "https://binance.com"]
 BYBIT_URLS = ["https://bybit.com", "https://bytick.com"]
 
 
@@ -96,11 +96,12 @@ async def get_universe(session, source):
                 universe.append({"symbol": item["symbol"], "price": float(item["lastPrice"]), "funding": float(item.get("fundingRate", 0)) * 100, "source": "BYBIT"})
     return universe
 async def get_market_history(session, symbol, source):
-    candles, c15, oi_s, rl, wl = [], [], [], 50.0, 50.0
+    candles, c15, c5, oi_s, rl, wl = [], [], [], [], 50.0, 50.0
     if source != "BYBIT":
-        kl, kl15, oi, gl, tp = await asyncio.gather(
+        kl, kl15, kl5, oi, gl, tp = await asyncio.gather(
             fetch_json(session, f"{source}/fapi/v1/klines", {"symbol": symbol, "interval": "1h", "limit": 48}),
             fetch_json(session, f"{source}/fapi/v1/klines", {"symbol": symbol, "interval": "15m", "limit": 100}),
+            fetch_json(session, f"{source}/fapi/v1/klines", {"symbol": symbol, "interval": "5m", "limit": 30}),
             fetch_json(session, f"{source}/futures/data/openInterestHist", {"symbol": symbol, "period": "1h", "limit": 24}),
             fetch_json(session, f"{source}/futures/data/globalLongShortAccountRatio", {"symbol": symbol, "period": "1h", "limit": 1}),
             fetch_json(session, f"{source}/futures/data/topLongShortPositionRatio", {"symbol": symbol, "period": "1h", "limit": 1}),
@@ -108,25 +109,28 @@ async def get_market_history(session, symbol, source):
         if isinstance(kl, list) and len(kl) >= 24 and isinstance(oi, list) and len(oi) >= 6:
             candles = [(float(o), float(h), float(l), float(cl), float(v), float(tb)) for _, o, h, l, cl, v, _, _, _, tb, *_ in kl]
             c15 = [(float(o), float(h), float(l), float(cl), float(v)) for _, o, h, l, cl, v, *_ in kl15] if isinstance(kl15, list) else []
+            c5 = [(float(o), float(h), float(l), float(cl), float(v)) for _, o, h, l, cl, v, *_ in kl5] if isinstance(kl5, list) else []
             oi_s = [float(x["sumOpenInterestValue"]) for x in oi]
-            rl = float(gl[0]["longAccount"]) * 100 if isinstance(gl, list) and gl else 50.0
-            wl = float(tp[0]["longAccount"]) * 100 if isinstance(tp, list) and tp else 50.0
-            return candles, c15, oi_s, rl, wl
-    kl_b, kl15_b, oi_b, ac_b = await asyncio.gather(
+            rl = float(gl[int(0)]["longAccount"]) * 100 if isinstance(gl, list) and gl else 50.0
+            wl = float(tp[int(0)]["longAccount"]) * 100 if isinstance(tp, list) and tp else 50.0
+            return candles, c15, c5, oi_s, rl, wl
+    kl_b, kl15_b, kl5_b, oi_b, ac_b = await asyncio.gather(
         fetch_bybit(session, "/v5/market/kline", {"category": "linear", "symbol": symbol, "interval": "60", "limit": 48}),
         fetch_bybit(session, "/v5/market/kline", {"category": "linear", "symbol": symbol, "interval": "15", "limit": 100}),
+        fetch_bybit(session, "/v5/market/kline", {"category": "linear", "symbol": symbol, "interval": "5", "limit": 30}),
         fetch_bybit(session, "/v5/market/open-interest", {"category": "linear", "symbol": symbol, "intervalTime": "1h", "limit": 24}),
         fetch_bybit(session, "/v5/market/account-ratio", {"category": "linear", "symbol": symbol, "period": "1h", "limit": 1}),
     )
     if kl_b and oi_b and len(kl_b["result"]["list"]) >= 24 and len(oi_b["result"]["list"]) >= 6:
         candles = [(float(o), float(h), float(l), float(cl), float(v), float(v) * 0.5) for _, o, h, l, cl, v, *_ in reversed(kl_b["result"]["list"])]
         c15 = [(float(o), float(h), float(l), float(cl), float(v)) for _, o, h, l, cl, v, *_ in reversed(kl15_b["result"]["list"])] if kl15_b and kl15_b["result"]["list"] else []
+        c5 = [(float(o), float(h), float(l), float(cl), float(v)) for _, o, h, l, cl, v, *_ in reversed(kl5_b["result"]["list"])] if kl5_b and kl5_b["result"]["list"] else []
         oi_s = [float(x["openInterest"]) for x in reversed(oi_b["result"]["list"])]
-        rl = float(ac_b["result"]["list"][0]["buyRatio"]) * 100 if ac_b and ac_b["result"]["list"] else 50.0
+        rl = float(ac_b["result"]["list"][int(0)]["buyRatio"]) * 100 if ac_b and ac_b["result"]["list"] else 50.0
         tp_b = await fetch_json(session, "https://binance.com", {"symbol": symbol, "period": "1h", "limit": 1})
-        wl = float(tp_b[0]["longAccount"]) * 100 if isinstance(tp_b, list) and tp_b else 100.0 - rl
-        return candles, c15, oi_s, rl, wl
-    return None, None, None, 50.0, 50.0
+        wl = float(tp_b[int(0)]["longAccount"]) * 100 if isinstance(tp_b, list) and tp_b else 100.0 - rl
+        return candles, c15, c5, oi_s, rl, wl
+    return None, None, None, None, 50.0, 50.0
 
 
 def explain_context(p_chg, oi_chg, rl, wl, cvd_usd, nd_usd, funding):
@@ -147,26 +151,28 @@ def explain_context(p_chg, oi_chg, rl, wl, cvd_usd, nd_usd, funding):
     return crowd_txt, whale_txt, cvd_txt, nd_txt
 
 
-def build_trade_plan(ema_bounds, has_l, has_s, up_poc, dn_poc):
+def build_trade_plan(ema_bounds, has_l, has_s, up_poc, dn_poc, is_s13=False):
     if not ema_bounds:
         return ""
     ema_bot, ema_top = ema_bounds
+    label = "пробою наклонной #13" if is_s13 else "узлу"
     if has_l and not has_s:
         e, sl = round(ema_top, 6), round(ema_bot * 0.992, 6)
-        tp1, tp2 = round(e * 1.018, 6), (up_poc[0] if up_poc else round(e * 1.036, 6))
-        return f"\n📐 <b>План (ЛОНГ по узлу):</b>\n• Вход/ретест: <code>{e}</code> | SL: <code>{sl}</code> (-{round((e-sl)/e*100,2)}%)\n• TP (50/50): <code>{tp1}</code> → <code>{tp2}</code>"
+        tp1, tp2 = round(e * 1.018, 6), (up_poc[int(0)] if up_poc else round(e * 1.036, 6))
+        return f"\n📐 <b>План (ЛОНГ по {label}):</b>\n• Вход/ретест: <code>{e}</code> | SL: <code>{sl}</code> (-{round((e-sl)/e*100,2)}%)\n• TP (50/50): <code>{tp1}</code> → <code>{tp2}</code>"
     if has_s and not has_l:
         e, sl = round(ema_bot, 6), round(ema_top * 1.008, 6)
-        tp1, tp2 = round(e * 0.982, 6), (dn_poc[0] if dn_poc else round(e * 0.964, 6))
-        return f"\n📐 <b>План (ШОРТ по узлу):</b>\n• Вход/ретест: <code>{e}</code> | SL: <code>{sl}</code> (-{round((sl-e)/e*100,2)}%)\n• TP (50/50): <code>{tp1}</code> → <code>{tp2}</code>"
+        tp1, tp2 = round(e * 0.982, 6), (dn_poc[int(0)] if dn_poc else round(e * 0.964, 6))
+        return f"\n📐 <b>План (ШОРТ по {label}):</b>\n• Вход/ретест: <code>{e}</code> | SL: <code>{sl}</code> (-{round((sl-e)/e*100,2)}%)\n• TP (50/50): <code>{tp1}</code> → <code>{tp2}</code>"
     return ""
 
 
 def format_alert(item, hits, p_chg, oi_chg, rl, wl, up_poc, dn_poc, cvd_usd, nd_usd, candles, ema_bounds, btc_ctx):
     src = "Binance Futures" if item["source"] != "BYBIT" else "Bybit Futures"
     has_l, has_s = any("рассмотреть ЛОНГ" in h for h in hits), any("рассмотреть ШОРТ" in h for h in hits)
+    is_s13 = any("#13" in h for h in hits)
     verdict = "🟢 <b>ИТОГ: Лучше рассмотреть ЛОНГ</b>" if (has_l and not has_s) else ("🔴 <b>ИТОГ: Лучше рассмотреть ШОРТ</b>" if (has_s and not has_l) else "🪢 <b>ИТОГ: Снайперский сетап</b>")
-    pocs = ([f"⬆️ {up_poc[0]} (+{up_poc[1]}%)"] if up_poc else []) + ([f"⬇️ {dn_poc[0]} (-{dn_poc[1]}%)"] if dn_poc else [])
+    pocs = ([f"⬆️ {up_poc[int(0)]} (+{up_poc[1]}%)"] if up_poc else []) + ([f"⬇️ {dn_poc[int(0)]} (-{dn_poc[1]}%)"] if dn_poc else [])
     oi_sign = "+" if oi_chg > 0 else ""
     h24, l24 = max(h for _, h, _, _, _, *_ in candles[-24:]), min(l for _, _, l, _, _, *_ in candles[-24:])
     crowd_txt, whale_txt, cvd_txt, nd_txt = explain_context(p_chg, oi_chg, rl, wl, cvd_usd, nd_usd, item["funding"])
@@ -176,9 +182,9 @@ def format_alert(item, hits, p_chg, oi_chg, rl, wl, up_poc, dn_poc, cvd_usd, nd_
         warn = (has_l and not has_s and (btc_ctx["chg_1h"] <= -0.5 or not btc_ctx["above_ema"])) or (has_s and not has_l and btc_ctx["chg_1h"] >= 0.5 and btc_ctx["above_ema"])
         ico = "⚠️" if warn else "🧭"
         btc_line = f"{ico} <b>Поводырь BTC:</b> {btc_ctx['price']} ({bs}{round(btc_ctx['chg_1h'], 2)}% за 1ч, {'выше' if btc_ctx['above_ema'] else 'ниже'} 15m EMA28)"
-    plan_txt = build_trade_plan(ema_bounds, has_l, has_s, up_poc, dn_poc)
+    plan_txt = build_trade_plan(ema_bounds, has_l, has_s, up_poc, dn_poc, is_s13=is_s13)
     lines = [
-        f"⚡️ <b>СИГНАЛ: {item['symbol']} (15m/1Ч | Топ 20-250)</b> | {src}", verdict,
+        f"⚡️ <b>СИГНАЛ: {item['symbol']} (5m/15m/1Ч | Топ 20-250)</b> | {src}", verdict,
     ] + ([btc_line] if btc_line else []) + [
         f"💰 <b>Цена:</b> {item['price']} ({round(p_chg, 2)}% за 1ч) | 💸 <b>Фандинг:</b> {round(item['funding'], 4)}%",
         f"🎯 <b>Цели POC:</b> {' | '.join(pocs) if pocs else 'нет близких'} | 📈 <b>ОИ:</b> {oi_sign}{round(oi_chg, 2)}%",
@@ -187,7 +193,7 @@ def format_alert(item, hits, p_chg, oi_chg, rl, wl, up_poc, dn_poc, cvd_usd, nd_
         f"📊 <b>CVD (4ч):</b> {cvd_txt} | ⚖️ <b>Net Delta:</b> {nd_txt}",
         "", "<b>Сработавшие сетапы:</b>"
     ] + [f"• {h.replace('<', 'ниже ')}" for h in hits] + ([plan_txt] if plan_txt else []) + [
-        "", f"🔎 <a href='https://coinglass.com_{item['symbol']}'>Открыть {item['symbol']} на CoinGlass</a>"
+        "", f"🔎 <a href='https://coinglass.com{item['symbol']}'>Открыть {item['symbol']} на CoinGlass</a>"
     ]
     return "\n".join(lines)
 
@@ -195,16 +201,18 @@ def format_alert(item, hits, p_chg, oi_chg, rl, wl, up_poc, dn_poc, cvd_usd, nd_
 async def process_symbol(sem, session, bot, item, cache, lock, stats, btc_ctx):
     async with sem:
         sym = item["symbol"]
-        candles, c15, oi_s, rl, wl = await get_market_history(session, sym, item["source"])
+        candles, c15, c5, oi_s, rl, wl = await get_market_history(session, sym, item["source"])
         if not candles or not oi_s:
             return
-        hits, p_chg, oi_chg, rl, wl, _, _, up_poc, dn_poc, cvd_usd, _, nd_usd, ema_bounds = evaluate_all_9_setups(candles, oi_s, item["price"], item["funding"], rl, wl, c15)
+        hits, p_chg, oi_chg, rl, wl, _, _, up_poc, dn_poc, cvd_usd, _, nd_usd, ema_bounds = evaluate_all_9_setups(candles, oi_s, item["price"], item["funding"], rl, wl, c15, c5)
         if not hits:
             return
-        is_ema9 = any("#9" in h for h in hits)
+        is_ema9, is_s13 = any("#9" in h for h in hits), any("#13" in h for h in hits)
         if is_ema9:
             stats["ema9"] += 1
-        cache_key = f"{sym}_EMA9" if is_ema9 else sym
+        if is_s13:
+            stats["s13"] += 1
+        cache_key = f"{sym}_S13" if is_s13 else (f"{sym}_EMA9" if is_ema9 else sym)
         if time.time() - cache.get(cache_key, 0) < COOLDOWN_SEC:
             return
         await bot.send_message(CHAT_ID, format_alert(item, hits, p_chg, oi_chg, rl, wl, up_poc, dn_poc, cvd_usd, nd_usd, candles, ema_bounds, btc_ctx), parse_mode="HTML", disable_web_page_preview=True)
@@ -215,17 +223,15 @@ async def process_symbol(sem, session, bot, item, cache, lock, stats, btc_ctx):
 
 async def scan_market():
     bot = Bot(token=BOT_TOKEN)
-    cache, lock, stats = load_cache(), asyncio.Lock(), {"ema9": 0, "sent": 0}
+    cache, lock, stats = load_cache(), asyncio.Lock(), {"ema9": 0, "s13": 0, "sent": 0}
     async with aiohttp.ClientSession() as session:
         source = await get_active_source(session)
         btc_ctx, universe = await asyncio.gather(get_btc_context(session, source), get_universe(session, source))
-        await asyncio.gather(*(process_symbol(asyncio.Semaphore(10), session, bot, item, cache, lock, stats, btc_ctx) for item in universe))
-        print(f"Источник: {source} | Монет (20-250): {len(universe)} | Найдено #9: {stats['ema9']} | Отправлено: {stats['sent']}")
+        sem = asyncio.Semaphore(10)
+        await asyncio.gather(*(process_symbol(sem, session, bot, item, cache, lock, stats, btc_ctx) for item in universe))
+        print(f"Источник: {source} | Монет (20-250): {len(universe)} | Найдено #9: {stats['ema9']} | Найдено #13: {stats['s13']} | Отправлено: {stats['sent']}")
     save_cache(cache)
-    await bot.session.close()
 
-
-asyncio.run(scan_market())
 
 
 
