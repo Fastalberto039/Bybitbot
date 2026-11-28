@@ -3,7 +3,7 @@ from aiogram import Bot
 from setups import evaluate_all_9_setups, fmt_usd, calc_ema
 
 BOT_TOKEN, CHAT_ID = os.getenv("BOT_TOKEN"), os.getenv("CHAT_ID")
-RANK_START, RANK_END, MIN_VOL_USD, COOLDOWN_SEC = 20, 250, 3_000_000, 7200
+RANK_START, RANK_END, MIN_VOL_USD, COOLDOWN_SEC = 20, 250, 5_000_000, 7200
 CACHE_FILE = "sent_cache.json"
 BLACKLIST = {"XAUUSDT", "XAGUSDT", "NVDAUSDT", "TSLAUSDT", "AAPLUSDT", "COINUSDT", "MSTRUSDT", "QQQUSDT", "SPYUSDT", "GLDUSDT", "SLVUSDT"}
 BINANCE_URLS = ["https://binance.com", "https://binance.com", "https://binance.com", "https://binance.com"]
@@ -53,18 +53,16 @@ async def get_btc(s, src):
     try:
         kl = await fjson(s, f"{src}/fapi/v1/klines", {"symbol": "BTCUSDT", "interval": "15m", "limit": 65}) if src != "BYBIT" else None
         if isinstance(kl, list) and len(kl) >= 35:
-            cl = [float(x) for x in kl]
+            cl = [float(x.pop(4)) for x in kl]
         else:
             kb = await fbybit(s, "/v5/market/kline", {"category": "linear", "symbol": "BTCUSDT", "interval": "15", "limit": 65})
-            cl = [float(x) for x in reversed(kb["result"]["list"])] if kb and len(kb["result"]["list"]) >= 35 else []
+            cl = [float(x.pop(4)) for x in reversed(kb["result"]["list"])] if kb and len(kb["result"]["list"]) >= 35 else []
         if cl:
             c, p = cl[-1], cl[-5]
             return {"price": c, "chg_1h": (c - p) / p * 100 if p else 0.0, "above_ema": c >= calc_ema(cl[-60:], 28)}
     except Exception:
         pass
     return None
-
-
 async def get_uni(s, src):
     if src != "BYBIT":
         info = await fjson(s, f"{src}/fapi/v1/exchangeInfo")
@@ -81,6 +79,8 @@ async def get_uni(s, src):
         rk = sorted([x for x in d["result"]["list"] if valid_sym(x["symbol"]) and float(x.get("turnover24h", 0)) >= MIN_VOL_USD], key=lambda x: float(x.get("turnover24h", 0)), reverse=True)
         return [{"symbol": it["symbol"], "price": float(it["lastPrice"]), "funding": float(it.get("fundingRate", 0)) * 100, "source": "BYBIT"} for it in rk[RANK_START:RANK_END]]
     return []
+
+
 async def get_hist(s, sym, src):
     if src != "BYBIT":
         kl, k15, oi, gl, tp = await asyncio.gather(
@@ -94,7 +94,6 @@ async def get_hist(s, sym, src):
             c = [(float(o), float(h), float(l), float(cl), float(v), float(tb)) for _, o, h, l, cl, v, _, _, _, tb, *_ in kl]
             c15 = [(float(o), float(h), float(l), float(cl), float(v)) for _, o, h, l, cl, v, *_ in k15] if isinstance(k15, list) else []
             return c, c15, [float(x["sumOpenInterestValue"]) for x in oi], float(next(iter(gl))["longAccount"]) * 100 if gl else 50.0, float(next(iter(tp))["longAccount"]) * 100 if tp else 50.0
-
     kb, k15b, oib, acb = await asyncio.gather(
         fbybit(s, "/v5/market/kline", {"category": "linear", "symbol": sym, "interval": "60", "limit": 48}),
         fbybit(s, "/v5/market/kline", {"category": "linear", "symbol": sym, "interval": "15", "limit": 100}),
@@ -104,12 +103,10 @@ async def get_hist(s, sym, src):
     if kb and oib and len(kb["result"]["list"]) >= 24 and len(oib["result"]["list"]) >= 6:
         c = [(float(o), float(h), float(l), float(cl), float(v), float(v) * 0.5) for _, o, h, l, cl, v, *_ in reversed(kb["result"]["list"])]
         c15 = [(float(o), float(h), float(l), float(cl), float(v)) for _, o, h, l, cl, v, *_ in reversed(k15b["result"]["list"])] if k15b else []
-        rl = float(acb["result"]["list"]["buyRatio"]) * 100 if acb and acb["result"]["list"] else 50.0
+        rl = float(next(iter(acb["result"]["list"]))["buyRatio"]) * 100 if acb and acb["result"]["list"] else 50.0
         tpb = await fjson(s, "https://binance.com", {"symbol": sym, "period": "1h", "limit": 1})
-        return c, c15, [float(x["openInterest"]) for x in reversed(oib["result"]["list"])], rl, float(tpb["longAccount"]) * 100 if tpb else 100.0 - rl
+        return c, c15, [float(x["openInterest"]) for x in reversed(oib["result"]["list"])], rl, float(next(iter(tpb))["longAccount"]) * 100 if tpb else 100.0 - rl
     return None, None, None, 50.0, 50.0
-
-
 def strict_ok(hits, p_chg, oi_chg, rl, wl, up_poc, dn_poc, cvd, nd, fund, btc):
     txt = " | ".join(hits)
     if "внутри НЕ входить" in txt or "БОКОВИК (ФЛЭТ)" in txt:
@@ -123,7 +120,7 @@ def strict_ok(hits, p_chg, oi_chg, rl, wl, up_poc, dn_poc, cvd, nd, fund, btc):
         if (btc and (not btc["above_ema"] or btc["chg_1h"] <= -0.35)) or not up_poc or up_poc.pop(1) < 1.4:
             return False
         return True
-        if "ВОСХОДЯЩИЙ" in txt or "выше пучка" in txt or cvd >= 0 or p_chg <= -5.0 or not dn_poc or dn_poc.pop(1) < 1.4:
+    if "ВОСХОДЯЩИЙ" in txt or "выше пучка" in txt or cvd >= 0 or p_chg <= -5.0 or not dn_poc or dn_poc.pop(1) < 1.4:
         return False
     if btc and btc["above_ema"] and btc["chg_1h"] >= 0.35:
         return False
@@ -181,6 +178,7 @@ async def main():
 
 
 asyncio.run(main())
+
 
 
 
