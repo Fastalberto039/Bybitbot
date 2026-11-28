@@ -126,6 +126,33 @@ def strict_ok(hits, p_chg, oi_chg, rl, wl, up_poc, dn_poc, cvd, nd, fund, btc):
         return False
     return (100.0 - wl) >= 54.0 or (rl >= 58.0 and fund > 0.0)
 
+def fmt_msg(it, hits, p_chg, oi_chg, rl, wl, up_poc, dn_poc, cvd, nd, candles, eb, btc):
+    hl = any("рассмотреть ЛОНГ" in h for h in hits)
+    v = "🟢 <b>ИТОГ: ЧИСТЫЙ ЛОНГ</b>" if hl else "🔴 <b>ИТОГ: ЧИСТЫЙ ШОРТ</b>"
+    pocs = ([f"⬆️ {up_poc.pop(0)}"] if up_poc else []) + ([f"⬇️ {dn_poc.pop(0)}"] if dn_poc else [])
+    h24, l24 = max(h for _, h, _, _, _, *_ in candles[-24:]), min(l for _, _, l, _, _, *_ in candles[-24:])
+    bline = f"🧭 <b>BTC:</b> {btc['price']} ({btc['chg_1h']:+.2f}%, {'выше' if btc['above_ema'] else 'ниже'} EMA28)" if btc else ""
+    anom = []
+    if abs(p_chg) <= 1.5 and oi_chg >= 2.5:
+        anom.append(f"🧨 <b>СЖАТАЯ ПРУЖИНА ОИ:</b> цена {p_chg:+.2f}% при ОИ {oi_chg:+.2f}%")
+    if abs(it["funding"]) >= 0.035:
+        anom.append(f"🔥 <b>АНОМАЛЬНЫЙ ФАНДИНГ:</b> {round(it['funding'], 4)}% (топливо для выноса!)")
+    plan = ""
+    if eb:
+        e, sl = (round(eb.pop(1), 6), round(eb.pop(0) * 0.992, 6)) if hl else (round(eb.pop(0), 6), round(eb.pop(1) * 1.008, 6))
+        sl_pct = max(abs(e - sl) / e * 100.0, 0.35)
+        pos_usdt = min(round(2.20 / (sl_pct / 100.0)), 250)
+        tp1, tp2 = (round(e * 1.018, 6), round(e * 1.036, 6)) if hl else (round(e * 0.982, 6), round(e * 0.964, 6))
+        plan = f"\n📐 <b>План (риск $2.20 → ~{pos_usdt} USDT):</b>\n• Вход: <code>{e}</code> | SL: <code>{sl}</code> (-{sl_pct:.2f}%)\n• TP: <code>{tp1}</code> → <code>{tp2}</code>"
+    return "\n".join([
+        f"⚡️ <b>СНАЙПЕР: {it['symbol']}</b> | {'Binance' if it['source'] != 'BYBIT' else 'Bybit'}", v, bline,
+    ] + anom + [
+        f"💰 <b>Цена:</b> {it['price']} ({p_chg:+.2f}%) | 💸 <b>Фандинг:</b> {round(it['funding'], 4)}%",
+        f"🎯 <b>POC:</b> {' | '.join(pocs)} | 📈 <b>ОИ:</b> {oi_chg:+.2f}%",
+        f"💥 <b>Ликв. 25x:</b> шортов > <code>{round(l24*1.04, 6)}</code> | лонгов < <code>{round(h24*0.96, 6)}</code>",
+        f"👥 <b>Толпа:</b> {round(rl,1)}% Л / {round(100-rl,1)}% Ш | 🐋 <b>Киты:</b> {round(wl,1)}% Л",
+        f"📊 <b>CVD:</b> {fmt_usd(cvd)} | ⚖️ <b>Net Delta:</b> {fmt_usd(nd)}", "", "<b>Сетапы:</b>"
+    ] + [f"• {h.replace('<', 'ниже ')}" for h in hits] + ([plan] if plan else []))
 
 
 async def worker(sem, s, bot, it, cache, lock, st, btc):
