@@ -128,9 +128,9 @@ def check_binance_symbol(base_url, symbol, last_sent_ts, now):
     closed_ratio = closed_vol / avg_usdt
 
     if live_ratio >= closed_ratio:
-        target, vol_usdt, ratio, state = live_candle, live_vol, live_ratio, "🔥 ПРЯМО СЕЙЧАС (текущая 5m)"
+        target, vol_usdt, ratio, state = live_candle, live_vol, live_ratio, "🔥 ПРЯМО СЕЙЧАС (5m)"
     else:
-        target, vol_usdt, ratio, state = closed_candle, closed_vol, closed_ratio, "✅ ЗАКРЫТАЯ 5m свеча"
+        target, vol_usdt, ratio, state = closed_candle, closed_vol, closed_ratio, "✅ ЗАКРЫТАЯ 5m"
 
     if ratio < SPIKE_MULT:
         return symbol, None
@@ -148,11 +148,14 @@ def check_binance_symbol(base_url, symbol, last_sent_ts, now):
 
     buy_pct = (taker_buy_usdt / vol_usdt * 100.0) if vol_usdt > 0 else 50.0
     is_green = c >= o
-    if is_green and buy_pct < 55.0:
-        return symbol, None
-    if not is_green and buy_pct > 45.0:
+    aggr_pct = buy_pct if is_green else (100.0 - buy_pct)
+    if aggr_pct < 58.0:
         return symbol, None
 
+    is_break_hi = is_green and c > range_hi
+    is_break_lo = (not is_green) and c < range_lo
+
+    oi_chg = 0.0
     oi_txt = "нет данных"
     try:
         oi_data = fetch_json(f"{base_url}/futures/data/openInterestHist?symbol={symbol}&period=5m&limit=4")
@@ -161,29 +164,43 @@ def check_binance_symbol(base_url, symbol, last_sent_ts, now):
             oi_last = float(oi_data.pop()["sumOpenInterestValue"])
             if oi_first > 0:
                 oi_chg = (oi_last - oi_first) / oi_first * 100.0
-                oi_note = "новые деньги!" if oi_chg >= 0.6 else ("закрытие/ликвидации" if oi_chg <= -0.6 else "нейтрально")
+                oi_note = "новые деньги!" if oi_chg >= 0.5 else ("ликвидации" if oi_chg <= -0.5 else "ровно")
                 oi_txt = f"{oi_chg:+.2f}% ({oi_note})"
     except Exception:
         pass
 
-    if is_green and c > range_hi:
-        lvl_txt = "🚀 ПРОБОЙ 20-свечного хая"
-    elif not is_green and c < range_lo:
-        lvl_txt = "🩸 ПРОБОЙ 20-свечного лоя"
-    else:
-        lvl_txt = "📦 внутри 20-свечного диапазона"
+    new_money = oi_chg >= 0.5
+    strong_breakout = (is_break_hi or is_break_lo) and ratio >= 3.5 and aggr_pct >= 60.0 and oi_chg > -0.4
+    if not (new_money or strong_breakout):
+        return symbol, None
 
+    if is_green:
+        side = "🟢 ЛОНГ-ИМПУЛЬС"
+        sl = round(l * 0.9985, 6)
+        sl_pct = max((c - sl) / c * 100.0, 0.35)
+        tp1 = round(c * (1.0 + sl_pct * 2.0 / 100.0), 6)
+        tp2 = round(c * (1.0 + sl_pct * 3.0 / 100.0), 6)
+        lvl_txt = "🚀 ПРОБОЙ 20-свечного хая" if is_break_hi else "📈 Набор внутри диапазона"
+    else:
+        side = "🔴 ШОРТ-ИМПУЛЬС"
+        sl = round(h * 1.0015, 6)
+        sl_pct = max((sl - c) / c * 100.0, 0.35)
+        tp1 = round(c * (1.0 - sl_pct * 2.0 / 100.0), 6)
+        tp2 = round(c * (1.0 - sl_pct * 3.0 / 100.0), 6)
+        lvl_txt = "🩸 ПРОБОЙ 20-свечного лоя" if is_break_lo else "📉 Слив внутри диапазона"
+
+    pos_usdt = min(round(2.20 / (sl_pct / 100.0)), 250)
     move_pct = ((c - o) / o) * 100.0
-    candle_icon = "🟢" if is_green else "🔴"
-    header = "🚨 ЭКСТРЕМАЛЬНЫЙ ОБЪЁМ 5m" if ratio >= EXTREME_MULT else "⚡ АНОМАЛИЯ ОБЪЁМА 5m"
-    aggr_txt = f"покупки {buy_pct:.0f}%" if is_green else f"продажи {100.0 - buy_pct:.0f}%"
+    header = "🚨 ЭКСТРЕМАЛЬНАЯ АНОМАЛИЯ 5m" if ratio >= EXTREME_MULT else "⚡ АНОМАЛИЯ ОБЪЁМА 5m"
+    aggr_word = "покупки" if is_green else "продажи"
 
     text = (
-        f"{header}: <b>{symbol}</b> | {lvl_txt}\n"
-        f"📊 Всплеск: <b>x{ratio:.1f}</b> ({vol_usdt:,.0f}$ при среднем {avg_usdt:,.0f}$ | {state})\n"
-        f"{candle_icon} Свеча: <b>{move_pct:+.2f}%</b> (тело {body_ratio * 100:.0f}% — чистый импульс)\n"
-        f"⚖️ Агрессия: <b>{aggr_txt}</b> | 📈 <b>ОИ (15m): {oi_txt}</b>\n"
-        f"🎯 Цена: <code>{c}</code> | Диапазон 5m: <code>{l}</code> — <code>{h}</code>"
+        f"{header}: <b>{symbol}</b> | {side}\n"
+        f"📍 Уровень: <b>{lvl_txt}</b> ({state})\n"
+        f"📊 Объём: <b>x{ratio:.1f}</b> ({vol_usdt:,.0f}$ / ср. {avg_usdt:,.0f}$) | Свеча: <b>{move_pct:+.2f}%</b>\n"
+        f"⚖️ Агрессия: <b>{aggr_word} {aggr_pct:.0f}%</b> | 📈 <b>ОИ (15m): {oi_txt}</b>\n"
+        f"📐 <b>План (риск $2.20):</b> вход <code>{c}</code> | SL <code>{sl}</code> (-{sl_pct:.2f}%)\n"
+        f"💰 <b>Объём входа: ~{pos_usdt} USDT</b> | TP1: <code>{tp1}</code> | TP2: <code>{tp2}</code>"
     )
     return symbol, text
 
@@ -226,6 +243,7 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
 
 
