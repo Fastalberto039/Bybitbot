@@ -120,10 +120,10 @@ def strict_ok(hits, p_chg, oi_chg, rl, wl, up_poc, dn_poc, cvd, nd, fund, btc):
     if hl:
         if "НИСХОДЯЩИЙ" in txt or "ниже пучка" in txt or oi_chg < 1.5 or wl < 58.0 or cvd <= 0 or nd <= 0 or fund >= 0.025 or p_chg >= 5.0:
             return False
-        if (btc and (not btc["above_ema"] or btc["chg_1h"] <= -0.35)) or not up_poc or up_poc < 1.4:
+                if (btc and (not btc["above_ema"] or btc["chg_1h"] <= -0.35)) or not up_poc or up_poc.pop(1) < 1.4:
             return False
         return True
-    if "ВОСХОДЯЩИЙ" in txt or "выше пучка" in txt or cvd >= 0 or p_chg <= -5.0 or not dn_poc or dn_poc < 1.4:
+        if "ВОСХОДЯЩИЙ" in txt or "выше пучка" in txt or cvd >= 0 or p_chg <= -5.0 or not dn_poc or dn_poc.pop(1) < 1.4:
         return False
     if btc and btc["above_ema"] and btc["chg_1h"] >= 0.35:
         return False
@@ -133,7 +133,7 @@ def strict_ok(hits, p_chg, oi_chg, rl, wl, up_poc, dn_poc, cvd, nd, fund, btc):
 def fmt_msg(it, hits, p_chg, oi_chg, rl, wl, up_poc, dn_poc, cvd, nd, candles, eb, btc):
     hl = any("рассмотреть ЛОНГ" in h for h in hits)
     v = "🟢 <b>ИТОГ: ЧИСТЫЙ ЛОНГ</b>" if hl else "🔴 <b>ИТОГ: ЧИСТЫЙ ШОРТ</b>"
-    pocs = ([f"⬆️ {up_poc} (+{up_poc}%)"] if up_poc else []) + ([f"⬇️ {dn_poc} (-{dn_poc}%)"] if dn_poc else [])
+        pocs = ([f"⬆️ {up_poc.pop(0)}"] if up_poc else []) + ([f"⬇️ {dn_poc.pop(0)}"] if dn_poc else [])
     h24, l24 = max(h for _, h, _, _, _, *_ in candles[-24:]), min(l for _, _, l, _, _, *_ in candles[-24:])
     bline = f"🧭 <b>BTC:</b> {btc['price']} ({btc['chg_1h']:+.2f}%, {'выше' if btc['above_ema'] else 'ниже'} EMA28)" if btc else ""
     plan = ""
