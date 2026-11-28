@@ -2,6 +2,7 @@ import os
 import json
 import time
 import urllib.request
+from concurrent.futures import ThreadPoolExecutor, as_completed
 
 BOT_TOKEN = os.getenv("BOT_TOKEN", "")
 CHAT_ID = os.getenv("CHAT_ID", "")
@@ -15,12 +16,13 @@ BINANCE_MIRRORS = [
 ]
 
 LOOKBACK = 20                 # Средний объём за 20 закрытых 5m свечей (100 мин)
-SPIKE_MULT = 2.2              # Порог аномалии: в 2.2x от среднего (оптимально для выходных)
-EXTREME_MULT = 4.0            # Экстремальный всплеск: в 4.0x и выше
-RANK_START = 19               # С 20-го места по обороту (как в основном боте Топ 20-250)
+SPIKE_MULT = 2.5              # Порог аномалии: в 2.5x от среднего
+EXTREME_MULT = 4.5            # Экстремальный всплеск: в 4.5x и выше
+RANK_START = 19               # С 20-го места по обороту (Топ 20-250 как в основном боте)
 RANK_END = 250                # По 250-е место по обороту
 MIN_AVG_5M_USDT = 15_000      # Средний 5m объём > $15,000
 COOLDOWN_SEC = 900            # Анти-спам: 15 минут на монету
+MAX_WORKERS = 20              # 20 параллельных потоков (весь проход за ~12-15 секунд)
 CACHE_FILE = "volume_cache.json"
 
 
@@ -50,7 +52,7 @@ def fetch_json(url):
             "Accept": "application/json",
         },
     )
-    with urllib.request.urlopen(req, timeout=10) as resp:
+    with urllib.request.urlopen(req, timeout=8) as resp:
         return json.loads(resp.read().decode("utf-8"))
 
 
@@ -90,24 +92,23 @@ def get_working_mirror_and_symbols():
                 return base_url, selected
         except Exception as e:
             last_err = e
-            print(f"Mirror fail {base_url}: {e}")
     raise RuntimeError(f"All mirrors failed: {last_err}")
 
 
-def check_binance_symbol(base_url, symbol, cache, now):
-    if now - float(cache.get(symbol, 0)) < COOLDOWN_SEC:
-        return None, 0.0, None
+def check_binance_symbol(base_url, symbol, last_sent_ts, now):
+    if now - float(last_sent_ts) < COOLDOWN_SEC:
+        return symbol, None, 0.0, None
 
     limit = LOOKBACK + 2
     url = f"{base_url}/fapi/v1/klines?symbol={symbol}&interval=5m&limit={limit}"
     candles = fetch_json(url)
     if not isinstance(candles, list) or len(candles) < limit:
-        return None, 0.0, None
+        return symbol, None, 0.0, None
 
     history = candles[:-2][-LOOKBACK:]
     avg_usdt = sum(float(c[7]) for c in history) / LOOKBACK
     if avg_usdt < MIN_AVG_5M_USDT:
-        return None, 0.0, None
+        return symbol, None, 0.0, None
 
     live_candle = candles[-1]
     closed_candle = candles[-2]
@@ -139,13 +140,13 @@ def check_binance_symbol(base_url, symbol, cache, now):
     )
 
     if ratio >= SPIKE_MULT:
-        cache[symbol] = now
-        return text, ratio, text
-    return None, ratio, text
+        return symbol, text, ratio, text
+    return symbol, None, ratio, text
 
 
 def main():
-    now = time.time()
+    t0 = time.time()
+    now = t0
     cache = load_cache()
     is_first_run = not os.path.exists(CACHE_FILE)
     cache = {k: v for k, v in cache.items() if now - float(v) < 7200}
@@ -155,28 +156,33 @@ def main():
     best_ratio = 0.0
     best_preview = None
 
-    for sym in symbols:
-        try:
-            msg, ratio, preview = check_binance_symbol(base_url, sym, cache, now)
-            if ratio > best_ratio and preview:
-                best_ratio = ratio
-                best_preview = preview
-            if msg:
-                alerts.append(msg)
-            time.sleep(0.04)
-        except Exception:
-            continue
+    with ThreadPoolExecutor(max_workers=MAX_WORKERS) as pool:
+        futures = {
+            pool.submit(check_binance_symbol, base_url, sym, cache.get(sym, 0), now): sym
+            for sym in symbols
+        }
+        for fut in as_completed(futures):
+            try:
+                sym, msg, ratio, preview = fut.result()
+                if ratio > best_ratio and preview:
+                    best_ratio = ratio
+                    best_preview = preview
+                if msg:
+                    cache[sym] = now
+                    alerts.append(msg)
+            except Exception:
+                continue
 
-    print(f"Проверено: {len(symbols)} | Аномалий >= x{SPIKE_MULT}: {len(alerts)} | Макс. всплеск: x{best_ratio:.2f}")
+    elapsed = time.time() - t0
+    print(f"Готово за {elapsed:.1f}с | Проверено: {len(symbols)} | Аномалий: {len(alerts)} | Макс: x{best_ratio:.2f}")
 
-    # При самом первом запуске (пока нет volume_cache.json), если рынок тихий — пришлём лидер-всплеск для проверки связи
     if is_first_run and not alerts and best_preview:
-        alerts.append("🧪 <b>ТЕСТ ПЕРВОГО ЗАПУСКА (самый высокий всплеск прямо сейчас):</b>\n\n" + best_preview)
+        alerts.append("🧪 <b>ТЕСТ СВЯЗИ (максимальный всплеск прямо сейчас):</b>\n\n" + best_preview)
 
     for text in alerts:
         try:
             send_telegram(text)
-            time.sleep(0.4)
+            time.sleep(0.3)
         except Exception as e:
             print(f"TG Error: {e}")
 
@@ -185,4 +191,5 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
