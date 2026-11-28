@@ -19,11 +19,12 @@ BINANCE_MIRRORS = [
 ]
 
 LOOKBACK = 20
-SPIKE_MULT = 2.5
-EXTREME_MULT = 4.5
+SPIKE_MULT = 3.0
+EXTREME_MULT = 5.0
 RANK_START = 19
 RANK_END = 250
 MIN_AVG_5M_USDT = 15_000
+MIN_BODY_RATIO = 0.45
 COOLDOWN_SEC = 900
 MAX_WORKERS = 20
 CACHE_FILE = "volume_cache.json"
@@ -61,11 +62,9 @@ def fetch_json(url):
 
 def send_telegram(text):
     if not BOT_TOKEN or not CHAT_ID:
-        print("ERROR: BOT_TOKEN или CHAT_ID пустые!")
         return False
-    url = "https://" + f"api.telegram.org/bot{BOT_TOKEN}/sendMessage"
-
-
+    host = "api.telegram.org"
+    url = f"https://{host}/bot{BOT_TOKEN}/sendMessage"
     payload = json.dumps({
         "chat_id": CHAT_ID,
         "text": text,
@@ -101,25 +100,30 @@ def get_working_mirror_and_symbols():
 
 def check_binance_symbol(base_url, symbol, last_sent_ts, now):
     if now - float(last_sent_ts) < COOLDOWN_SEC:
-        return symbol, None, 0.0, None
+        return symbol, None
 
     limit = LOOKBACK + 2
     url = f"{base_url}/fapi/v1/klines?symbol={symbol}&interval=5m&limit={limit}"
     candles = fetch_json(url)
     if not isinstance(candles, list) or len(candles) < limit:
-        return symbol, None, 0.0, None
+        return symbol, None
 
     live_candle = candles.pop()
     closed_candle = candles.pop()
     history = candles[-LOOKBACK:]
 
-    avg_usdt = sum(float(c.pop(7)) for c in history) / LOOKBACK
+    highs_20 = [float(x[2]) for x in history]
+    lows_20 = [float(x[3]) for x in history]
+    vols_20 = [float(x[7]) for x in history]
+    avg_usdt = sum(vols_20) / LOOKBACK
     if avg_usdt < MIN_AVG_5M_USDT:
-        return symbol, None, 0.0, None
+        return symbol, None
 
-    live_vol = float(live_candle.pop(7))
-    closed_vol = float(closed_candle.pop(7))
+    range_hi = max(highs_20)
+    range_lo = min(lows_20)
 
+    live_vol = float(live_candle[7])
+    closed_vol = float(closed_candle[7])
     live_ratio = live_vol / avg_usdt
     closed_ratio = closed_vol / avg_usdt
 
@@ -128,26 +132,60 @@ def check_binance_symbol(base_url, symbol, last_sent_ts, now):
     else:
         target, vol_usdt, ratio, state = closed_candle, closed_vol, closed_ratio, "✅ ЗАКРЫТАЯ 5m свеча"
 
-    c = float(target.pop(4))
-    l = float(target.pop(3))
-    h = float(target.pop(2))
-    o = float(target.pop(1))
+    if ratio < SPIKE_MULT:
+        return symbol, None
 
-    move_pct = ((c - o) / o) * 100
-    candle_icon = "🟢" if c >= o else "🔴"
+    taker_buy_usdt = float(target[10])
+    c = float(target[4])
+    l = float(target[3])
+    h = float(target[2])
+    o = float(target[1])
+
+    full_range = h - l
+    body_ratio = (abs(c - o) / full_range) if full_range > 0 else 0.0
+    if body_ratio < MIN_BODY_RATIO:
+        return symbol, None
+
+    buy_pct = (taker_buy_usdt / vol_usdt * 100.0) if vol_usdt > 0 else 50.0
+    is_green = c >= o
+    if is_green and buy_pct < 55.0:
+        return symbol, None
+    if not is_green and buy_pct > 45.0:
+        return symbol, None
+
+    oi_txt = "нет данных"
+    try:
+        oi_data = fetch_json(f"{base_url}/futures/data/openInterestHist?symbol={symbol}&period=5m&limit=4")
+        if isinstance(oi_data, list) and len(oi_data) >= 2:
+            oi_first = float(next(iter(oi_data))["sumOpenInterestValue"])
+            oi_last = float(oi_data.pop()["sumOpenInterestValue"])
+            if oi_first > 0:
+                oi_chg = (oi_last - oi_first) / oi_first * 100.0
+                oi_note = "новые деньги!" if oi_chg >= 0.6 else ("закрытие/ликвидации" if oi_chg <= -0.6 else "нейтрально")
+                oi_txt = f"{oi_chg:+.2f}% ({oi_note})"
+    except Exception:
+        pass
+
+    if is_green and c > range_hi:
+        lvl_txt = "🚀 ПРОБОЙ 20-свечного хая"
+    elif not is_green and c < range_lo:
+        lvl_txt = "🩸 ПРОБОЙ 20-свечного лоя"
+    else:
+        lvl_txt = "📦 внутри 20-свечного диапазона"
+
+    move_pct = ((c - o) / o) * 100.0
+    candle_icon = "🟢" if is_green else "🔴"
     header = "🚨 ЭКСТРЕМАЛЬНЫЙ ОБЪЁМ 5m" if ratio >= EXTREME_MULT else "⚡ АНОМАЛИЯ ОБЪЁМА 5m"
+    aggr_txt = f"покупки {buy_pct:.0f}%" if is_green else f"продажи {100.0 - buy_pct:.0f}%"
 
     text = (
-        f"{header}: <b>{symbol}</b> (Binance Топ 20-250)\n"
-        f"📊 Всплеск: <b>x{ratio:.1f}</b> от среднего 5m ({state})\n"
-        f"💰 Объём 5m: <b>{vol_usdt:,.0f}$</b> (средний: {avg_usdt:,.0f}$)\n"
-        f"{candle_icon} Свеча: <b>{move_pct:+.2f}%</b> | Цена: <code>{c}</code>\n"
-        f"📏 Диапазон 5m: <code>{l}</code> — <code>{h}</code>"
+        f"{header}: <b>{symbol}</b> | {lvl_txt}\n"
+        f"📊 Всплеск: <b>x{ratio:.1f}</b> ({vol_usdt:,.0f}$ при среднем {avg_usdt:,.0f}$ | {state})\n"
+        f"{candle_icon} Свеча: <b>{move_pct:+.2f}%</b> (тело {body_ratio * 100:.0f}% — чистый импульс)\n"
+        f"⚖️ Агрессия: <b>{aggr_txt}</b> | 📈 <b>ОИ (15m): {oi_txt}</b>\n"
+        f"🎯 Цена: <code>{c}</code> | Диапазон 5m: <code>{l}</code> — <code>{h}</code>"
     )
-
-    if ratio >= SPIKE_MULT:
-        return symbol, text, ratio, text
-    return symbol, None, ratio, text
+    return symbol, text
 
 
 def main():
@@ -166,14 +204,14 @@ def main():
         }
         for fut in as_completed(futures):
             try:
-                sym, msg, ratio, _ = fut.result()
+                sym, msg = fut.result()
                 if msg:
                     alerts.append((sym, msg))
             except Exception:
                 continue
 
     elapsed = time.time() - t0
-    print(f"Готово за {elapsed:.1f}с | Проверено: {len(symbols)} | Аномалий: {len(alerts)}")
+    print(f"Готово за {elapsed:.1f}с | Проверено: {len(symbols)} | Умных аномалий: {len(alerts)}")
 
     for sym, text in alerts:
         try:
@@ -188,6 +226,7 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
 
 
