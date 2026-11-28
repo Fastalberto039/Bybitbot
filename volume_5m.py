@@ -4,8 +4,12 @@ import time
 import urllib.request
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
-BOT_TOKEN = os.getenv("BOT_TOKEN", "")
-CHAT_ID = os.getenv("CHAT_ID", "")
+RAW_TOKEN = os.getenv("BOT_TOKEN", "").strip()
+# Очищаем токен, если в секрете случайно сохранён полный URL https://telegram.org...
+if "/bot" in RAW_TOKEN:
+    RAW_TOKEN = RAW_TOKEN.split("/bot", 1)[1].split("/", 1)[0].strip()
+BOT_TOKEN = RAW_TOKEN
+CHAT_ID = os.getenv("CHAT_ID", "").strip()
 
 BINANCE_MIRRORS = [
     "https://binance.com",
@@ -22,7 +26,7 @@ RANK_START = 19               # С 20-го места по обороту (То�
 RANK_END = 250                # По 250-е место по обороту
 MIN_AVG_5M_USDT = 15_000      # Средний 5m объём > $15,000
 COOLDOWN_SEC = 900            # Анти-спам: 15 минут на монету
-MAX_WORKERS = 20              # 20 параллельных потоков (весь проход за ~12-15 секунд)
+MAX_WORKERS = 20              # 20 параллельных потоков (весь проход за ~6.5 секунд)
 CACHE_FILE = "volume_cache.json"
 
 
@@ -59,7 +63,7 @@ def fetch_json(url):
 def send_telegram(text):
     if not BOT_TOKEN or not CHAT_ID:
         print("ERROR: BOT_TOKEN или CHAT_ID пустые!")
-        return
+        return False
     url = f"https://telegram.org{BOT_TOKEN}/sendMessage"
     payload = json.dumps({
         "chat_id": CHAT_ID,
@@ -73,6 +77,7 @@ def send_telegram(text):
     )
     with urllib.request.urlopen(req, timeout=10) as resp:
         resp.read()
+    return True
 
 
 def get_working_mirror_and_symbols():
@@ -106,26 +111,26 @@ def check_binance_symbol(base_url, symbol, last_sent_ts, now):
         return symbol, None, 0.0, None
 
     history = candles[:-2][-LOOKBACK:]
-    avg_usdt = sum(float(c[7]) for c in history) / LOOKBACK
+    avg_usdt = sum(float(c) for c in history) / LOOKBACK
     if avg_usdt < MIN_AVG_5M_USDT:
         return symbol, None, 0.0, None
 
     live_candle = candles[-1]
     closed_candle = candles[-2]
 
-    live_ratio = float(live_candle[7]) / avg_usdt
-    closed_ratio = float(closed_candle[7]) / avg_usdt
+    live_ratio = float(live_candle) / avg_usdt
+    closed_ratio = float(closed_candle) / avg_usdt
 
     if live_ratio >= closed_ratio:
         target, ratio, state = live_candle, live_ratio, "🔥 ПРЯМО СЕЙЧАС (текущая 5m)"
     else:
         target, ratio, state = closed_candle, closed_ratio, "✅ ЗАКРЫТАЯ 5m свеча"
 
-    o = float(target[1])
-    h = float(target[2])
-    l = float(target[3])
-    c = float(target[4])
-    vol_usdt = float(target[7])
+    o = float(target)
+    h = float(target)
+    l = float(target)
+    c = float(target)
+    vol_usdt = float(target)
 
     move_pct = ((c - o) / o) * 100
     candle_icon = "🟢" if c >= o else "🔴"
@@ -148,13 +153,10 @@ def main():
     t0 = time.time()
     now = t0
     cache = load_cache()
-    is_first_run = not os.path.exists(CACHE_FILE)
     cache = {k: v for k, v in cache.items() if now - float(v) < 7200}
 
     base_url, symbols = get_working_mirror_and_symbols()
     alerts = []
-    best_ratio = 0.0
-    best_preview = None
 
     with ThreadPoolExecutor(max_workers=MAX_WORKERS) as pool:
         futures = {
@@ -163,33 +165,28 @@ def main():
         }
         for fut in as_completed(futures):
             try:
-                sym, msg, ratio, preview = fut.result()
-                if ratio > best_ratio and preview:
-                    best_ratio = ratio
-                    best_preview = preview
+                sym, msg, ratio, _ = fut.result()
                 if msg:
-                    cache[sym] = now
-                    alerts.append(msg)
+                    alerts.append((sym, msg))
             except Exception:
                 continue
 
     elapsed = time.time() - t0
-    print(f"Готово за {elapsed:.1f}с | Проверено: {len(symbols)} | Аномалий: {len(alerts)} | Макс: x{best_ratio:.2f}")
+    print(f"Готово за {elapsed:.1f}с | Проверено: {len(symbols)} | Аномалий: {len(alerts)}")
 
-    if is_first_run and not alerts and best_preview:
-        alerts.append("🧪 <b>ТЕСТ СВЯЗИ (максимальный всплеск прямо сейчас):</b>\n\n" + best_preview)
-
-    for text in alerts:
+    for sym, text in alerts:
         try:
-            send_telegram(text)
-            time.sleep(0.3)
+            if send_telegram(text):
+                cache[sym] = now
+                time.sleep(0.3)
         except Exception as e:
-            print(f"TG Error: {e}")
+            print(f"TG Error ({sym}): {e}")
 
     save_cache(cache)
 
 
 if __name__ == "__main__":
     main()
+
 
 
