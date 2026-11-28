@@ -1,1 +1,36 @@
+name: Bybit 5m Volume Anomaly Scanner
+
+on:
+  schedule:
+    - cron: '*/5 * * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  scan-5m-volume:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Run 5m Volume Scanner
+        env:
+          BOT_TOKEN: ${{ secrets.BOT_TOKEN }}
+          CHAT_ID: ${{ secrets.CHAT_ID }}
+        run: python volume_5m.py
+
+      - name: Save volume cooldown cache
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@://github.com"
+          git pull --rebase origin main || true
+          git add volume_cache.json || true
+          git diff --staged --quiet || (git commit -m "Update 5m volume cache" && git push)
 
