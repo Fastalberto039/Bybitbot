@@ -1,4 +1,4 @@
-name: Bybit 5m Volume Anomaly Scanner
+name: Binance 5m Volume Scanner
 
 on:
   schedule:
