@@ -5,9 +5,8 @@ import urllib.request
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
 RAW_TOKEN = os.getenv("BOT_TOKEN", "").strip()
-# Очищаем токен, если в секрете случайно сохранён полный URL https://telegram.org...
 if "/bot" in RAW_TOKEN:
-    RAW_TOKEN = RAW_TOKEN.split("/bot", 1)[1].split("/", 1)[0].strip()
+    RAW_TOKEN = RAW_TOKEN.split("/bot", 1).pop(1).split("/", 1).pop(0).strip()
 BOT_TOKEN = RAW_TOKEN
 CHAT_ID = os.getenv("CHAT_ID", "").strip()
 
@@ -19,14 +18,14 @@ BINANCE_MIRRORS = [
     "https://binance.com",
 ]
 
-LOOKBACK = 20                 # Средний объём за 20 закрытых 5m свечей (100 мин)
-SPIKE_MULT = 2.5              # Порог аномалии: в 2.5x от среднего
-EXTREME_MULT = 4.5            # Экстремальный всплеск: в 4.5x и выше
-RANK_START = 19               # С 20-го места по обороту (Топ 20-250 как в основном боте)
-RANK_END = 250                # По 250-е место по обороту
-MIN_AVG_5M_USDT = 15_000      # Средний 5m объём > $15,000
-COOLDOWN_SEC = 900            # Анти-спам: 15 минут на монету
-MAX_WORKERS = 20              # 20 параллельных потоков (весь проход за ~6.5 секунд)
+LOOKBACK = 20
+SPIKE_MULT = 2.5
+EXTREME_MULT = 4.5
+RANK_START = 19
+RANK_END = 250
+MIN_AVG_5M_USDT = 15_000
+COOLDOWN_SEC = 900
+MAX_WORKERS = 20
 CACHE_FILE = "volume_cache.json"
 
 
@@ -78,8 +77,6 @@ def send_telegram(text):
     with urllib.request.urlopen(req, timeout=10) as resp:
         resp.read()
     return True
-
-
 def get_working_mirror_and_symbols():
     last_err = None
     for base_url in BINANCE_MIRRORS:
@@ -110,27 +107,29 @@ def check_binance_symbol(base_url, symbol, last_sent_ts, now):
     if not isinstance(candles, list) or len(candles) < limit:
         return symbol, None, 0.0, None
 
-    history = candles[:-2][-LOOKBACK:]
-    avg_usdt = sum(float(c) for c in history) / LOOKBACK
+    live_candle = candles.pop()
+    closed_candle = candles.pop()
+    history = candles[-LOOKBACK:]
+
+    avg_usdt = sum(float(c.pop(7)) for c in history) / LOOKBACK
     if avg_usdt < MIN_AVG_5M_USDT:
         return symbol, None, 0.0, None
 
-    live_candle = candles[-1]
-    closed_candle = candles[-2]
+    live_vol = float(live_candle.pop(7))
+    closed_vol = float(closed_candle.pop(7))
 
-    live_ratio = float(live_candle) / avg_usdt
-    closed_ratio = float(closed_candle) / avg_usdt
+    live_ratio = live_vol / avg_usdt
+    closed_ratio = closed_vol / avg_usdt
 
     if live_ratio >= closed_ratio:
-        target, ratio, state = live_candle, live_ratio, "🔥 ПРЯМО СЕЙЧАС (текущая 5m)"
+        target, vol_usdt, ratio, state = live_candle, live_vol, live_ratio, "🔥 ПРЯМО СЕЙЧАС (текущая 5m)"
     else:
-        target, ratio, state = closed_candle, closed_ratio, "✅ ЗАКРЫТАЯ 5m свеча"
+        target, vol_usdt, ratio, state = closed_candle, closed_vol, closed_ratio, "✅ ЗАКРЫТАЯ 5m свеча"
 
-    o = float(target)
-    h = float(target)
-    l = float(target)
-    c = float(target)
-    vol_usdt = float(target)
+    c = float(target.pop(4))
+    l = float(target.pop(3))
+    h = float(target.pop(2))
+    o = float(target.pop(1))
 
     move_pct = ((c - o) / o) * 100
     candle_icon = "🟢" if c >= o else "🔴"
@@ -187,6 +186,7 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
 
 
