@@ -169,7 +169,7 @@ def check_binance_symbol(base_url, symbol, last_sent_ts, now):
     except Exception:
         pass
 
-        if (is_break_hi or is_break_lo) and oi_chg >= 0.5 and ratio >= 3.0 and aggr_pct >= 60.0:
+    if (is_break_hi or is_break_lo) and oi_chg >= 0.5 and ratio >= 3.0 and aggr_pct >= 60.0:
         pattern_title = "🚀 ПАТТЕРН А: ПРОБОЙ НА НОВЫХ ДЕНЬГАХ (Вход по тренду / на ретесте)"
         action_hint = "Входим по направлению пробоя (или лимиткой на 30% отката свечи), если до 24ч хай/лоя есть запас >1.5%."
     elif (is_break_hi or is_break_lo) and oi_chg <= -0.5 and ratio >= 4.0 and aggr_pct >= 60.0:
