@@ -63,7 +63,7 @@ def send_telegram(text):
     if not BOT_TOKEN or not CHAT_ID:
         print("ERROR: BOT_TOKEN или CHAT_ID пустые!")
         return False
-            url = "https://" + f"api.telegram.org/bot{BOT_TOKEN}/sendMessage"
+    url = "https://" + f"api.telegram.org/bot{BOT_TOKEN}/sendMessage"
 
 
     payload = json.dumps({
