@@ -151,10 +151,11 @@ def fmt_msg(it, hits, p_chg, oi_chg, rl, wl, up_poc, dn_poc, cvd, nd, candles, e
     ] + anom + [
         f"💰 <b>Цена:</b> {it['price']} ({p_chg:+.2f}%) | 💸 <b>Фандинг:</b> {round(it['funding'], 4)}%",
         f"🎯 <b>POC:</b> {' | '.join(pocs)} | 📈 <b>ОИ:</b> {oi_chg:+.2f}%",
-        f"💥 <b>Ликв. 25x:</b> шортов > <code>{round(l24*1.04, 6)}</code> | лонгов < <code>{round(h24*0.96, 6)}</code>",
+        f"💥 <b>Ликв. 25x:</b> шортов выше <code>{round(l24*1.04, 6)}</code> | лонгов ниже <code>{round(h24*0.96, 6)}</code>",
         f"👥 <b>Толпа:</b> {round(rl,1)}% Л / {round(100-rl,1)}% Ш | 🐋 <b>Киты:</b> {round(wl,1)}% Л",
         f"📊 <b>CVD:</b> {fmt_usd(cvd)} | ⚖️ <b>Net Delta:</b> {fmt_usd(nd)}", "", "<b>Сетапы:</b>"
     ] + [f"• {h.replace('<', 'ниже ')}" for h in hits] + ([plan] if plan else []))
+
 
 
 
