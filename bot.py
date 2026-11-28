@@ -167,6 +167,7 @@ async def worker(sem, s, bot, it, cache, lock, st, btc):
 
 async def main():
     bot = Bot(token=BOT_TOKEN)
+    await bot.send_message(CHAT_ID, "✅ Снайпер-бот 15m на связи и готов к работе!")
     cache, lock, st = load_cache(), asyncio.Lock(), {"sent": 0}
     async with aiohttp.ClientSession() as s:
         src = await get_src(s)
