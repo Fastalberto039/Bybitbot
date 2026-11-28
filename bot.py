@@ -115,37 +115,17 @@ def strict_ok(hits, p_chg, oi_chg, rl, wl, up_poc, dn_poc, cvd, nd, fund, btc):
     if hl == hs:
         return False
     if hl:
-        if "НИСХОДЯЩИЙ" in txt or "ниже пучка" in txt or oi_chg < 1.5 or wl < 58.0 or cvd <= 0 or nd <= 0 or fund >= 0.025 or p_chg >= 5.0:
+        if "НИСХОДЯЩИЙ" in txt or "ниже пучка" in txt or oi_chg < 0.8 or wl < 54.0 or cvd <= 0 or fund >= 0.025 or p_chg >= 5.0:
             return False
-        if (btc and (not btc["above_ema"] or btc["chg_1h"] <= -0.35)) or not up_poc or up_poc.pop(1) < 1.4:
+        if (btc and (not btc["above_ema"] or btc["chg_1h"] <= -0.4)) or not up_poc or up_poc.pop(1) < 1.0:
             return False
         return True
-    if "ВОСХОДЯЩИЙ" in txt or "выше пучка" in txt or cvd >= 0 or p_chg <= -5.0 or not dn_poc or dn_poc.pop(1) < 1.4:
+    if "ВОСХОДЯЩИЙ" in txt or "выше пучка" in txt or cvd >= 0 or p_chg <= -5.0 or not dn_poc or dn_poc.pop(1) < 1.0:
         return False
-    if btc and btc["above_ema"] and btc["chg_1h"] >= 0.35:
+    if btc and btc["above_ema"] and btc["chg_1h"] >= 0.4:
         return False
-    return ((100.0 - wl) >= 58.0 and nd < 0) or (rl >= 60.0 and fund >= 0.015)
+    return (100.0 - wl) >= 54.0 or (rl >= 58.0 and fund > 0.0)
 
-
-def fmt_msg(it, hits, p_chg, oi_chg, rl, wl, up_poc, dn_poc, cvd, nd, candles, eb, btc):
-    hl = any("рассмотреть ЛОНГ" in h for h in hits)
-    v = "🟢 <b>ИТОГ: ЧИСТЫЙ ЛОНГ</b>" if hl else "🔴 <b>ИТОГ: ЧИСТЫЙ ШОРТ</b>"
-    pocs = ([f"⬆️ {up_poc.pop(0)}"] if up_poc else []) + ([f"⬇️ {dn_poc.pop(0)}"] if dn_poc else [])
-    h24, l24 = max(h for _, h, _, _, _, *_ in candles[-24:]), min(l for _, _, l, _, _, *_ in candles[-24:])
-    bline = f"🧭 <b>BTC:</b> {btc['price']} ({btc['chg_1h']:+.2f}%, {'выше' if btc['above_ema'] else 'ниже'} EMA28)" if btc else ""
-    plan = ""
-    if eb:
-        e, sl = (round(eb.pop(1), 6), round(eb.pop(0) * 0.992, 6)) if hl else (round(eb.pop(0), 6), round(eb.pop(1) * 1.008, 6))
-        tp1, tp2 = (round(e * 1.018, 6), round(e * 1.036, 6)) if hl else (round(e * 0.982, 6), round(e * 0.964, 6))
-        plan = f"\n📐 <b>План:</b> вход <code>{e}</code> | SL <code>{sl}</code> | TP <code>{tp1}</code> → <code>{tp2}</code>"
-    return "\n".join([
-        f"⚡️ <b>СНАЙПЕР: {it['symbol']}</b> | {'Binance' if it['source'] != 'BYBIT' else 'Bybit'}", v, bline,
-        f"💰 <b>Цена:</b> {it['price']} ({p_chg:+.2f}%) | 💸 <b>Фандинг:</b> {round(it['funding'], 4)}%",
-        f"🎯 <b>POC:</b> {' | '.join(pocs)} | 📈 <b>ОИ:</b> {oi_chg:+.2f}%",
-        f"💥 <b>Ликв. 25x:</b> шортов > <code>{round(l24*1.04, 6)}</code> | лонгов < <code>{round(h24*0.96, 6)}</code>",
-        f"👥 <b>Толпа:</b> {round(rl,1)}% Л / {round(100-rl,1)}% Ш | 🐋 <b>Киты:</b> {round(wl,1)}% Л",
-        f"📊 <b>CVD:</b> {fmt_usd(cvd)} | ⚖️ <b>Net Delta:</b> {fmt_usd(nd)}", "", "<b>Сетапы:</b>"
-    ] + [f"• {h.replace('<', 'ниже ')}" for h in hits] + ([plan] if plan else []))
 
 
 async def worker(sem, s, bot, it, cache, lock, st, btc):
@@ -166,8 +146,7 @@ async def worker(sem, s, bot, it, cache, lock, st, btc):
 
 
 async def main():
-    bot = Bot(token=BOT_TOKEN)
-    await bot.send_message(CHAT_ID, "✅ Снайпер-бот 15m на связи и готов к работе!")
+    bot = Bot(token=BOT_TOKEN) 
     cache, lock, st = load_cache(), asyncio.Lock(), {"sent": 0}
     async with aiohttp.ClientSession() as s:
         src = await get_src(s)
