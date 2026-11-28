@@ -93,7 +93,8 @@ async def get_hist(s, sym, src):
         if isinstance(kl, list) and len(kl) >= 24 and isinstance(oi, list) and len(oi) >= 6:
             c = [(float(o), float(h), float(l), float(cl), float(v), float(tb)) for _, o, h, l, cl, v, _, _, _, tb, *_ in kl]
             c15 = [(float(o), float(h), float(l), float(cl), float(v)) for _, o, h, l, cl, v, *_ in k15] if isinstance(k15, list) else []
-            return c, c15, [float(x["sumOpenInterestValue"]) for x in oi], float(gl["longAccount"]) * 100 if gl else 50.0, float(tp["longAccount"]) * 100 if tp else 50.0
+            return c, c15, [float(x["sumOpenInterestValue"]) for x in oi], float(next(iter(gl))["longAccount"]) * 100 if gl else 50.0, float(next(iter(tp))["longAccount"]) * 100 if tp else 50.0
+
     kb, k15b, oib, acb = await asyncio.gather(
         fbybit(s, "/v5/market/kline", {"category": "linear", "symbol": sym, "interval": "60", "limit": 48}),
         fbybit(s, "/v5/market/kline", {"category": "linear", "symbol": sym, "interval": "15", "limit": 100}),
