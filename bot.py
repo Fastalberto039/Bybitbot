@@ -3,7 +3,7 @@ from aiogram import Bot
 from setups import evaluate_all_9_setups, fmt_usd, calc_ema
 
 BOT_TOKEN, CHAT_ID = os.getenv("BOT_TOKEN"), os.getenv("CHAT_ID")
-RANK_START, RANK_END, MIN_VOL_USD, COOLDOWN_SEC = 20, 250, 5_000_000, 7200
+RANK_START, RANK_END, MIN_VOL_USD, COOLDOWN_SEC = 20, 250, 3_000_000, 7200
 CACHE_FILE = "sent_cache.json"
 BLACKLIST = {"XAUUSDT", "XAGUSDT", "NVDAUSDT", "TSLAUSDT", "AAPLUSDT", "COINUSDT", "MSTRUSDT", "QQQUSDT", "SPYUSDT", "GLDUSDT", "SLVUSDT"}
 BINANCE_URLS = ["https://binance.com", "https://binance.com", "https://binance.com", "https://binance.com"]
