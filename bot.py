@@ -138,8 +138,8 @@ def fmt_msg(it, hits, p_chg, oi_chg, rl, wl, up_poc, dn_poc, cvd, nd, candles, e
     bline = f"🧭 <b>BTC:</b> {btc['price']} ({btc['chg_1h']:+.2f}%, {'выше' if btc['above_ema'] else 'ниже'} EMA28)" if btc else ""
     plan = ""
     if eb:
-        e, sl = (round(eb, 6), round(eb * 0.992, 6)) if hl else (round(eb, 6), round(eb * 1.008, 6))
-        tp1, tp2 = (round(e * 1.018, 6), up_poc if up_poc else round(e * 1.036, 6)) if hl else (round(e * 0.982, 6), dn_poc if dn_poc else round(e * 0.964, 6))
+                e, sl = (round(eb.pop(1), 6), round(eb.pop(0) * 0.992, 6)) if hl else (round(eb.pop(0), 6), round(eb.pop(1) * 1.008, 6))
+        tp1, tp2 = (round(e * 1.018, 6), round(e * 1.036, 6)) if hl else (round(e * 0.982, 6), round(e * 0.964, 6))
         plan = f"\n📐 <b>План:</b> вход <code>{e}</code> | SL <code>{sl}</code> | TP <code>{tp1}</code> → <code>{tp2}</code>"
     return "\n".join([
         f"⚡️ <b>СНАЙПЕР: {it['symbol']}</b> | {'Binance' if it['source'] != 'BYBIT' else 'Bybit'}", v, bline,
