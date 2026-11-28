@@ -169,40 +169,47 @@ def check_binance_symbol(base_url, symbol, last_sent_ts, now):
     except Exception:
         pass
 
-    new_money = oi_chg >= 0.5
-    strong_breakout = (is_break_hi or is_break_lo) and ratio >= 3.5 and aggr_pct >= 60.0 and oi_chg > -0.4
-    if not (new_money or strong_breakout):
+        if (is_break_hi or is_break_lo) and oi_chg >= 0.5 and ratio >= 3.0 and aggr_pct >= 60.0:
+        pattern_title = "🚀 ПАТТЕРН А: ПРОБОЙ НА НОВЫХ ДЕНЬГАХ (Вход по тренду / на ретесте)"
+        action_hint = "Входим по направлению пробоя (или лимиткой на 30% отката свечи), если до 24ч хай/лоя есть запас >1.5%."
+    elif (is_break_hi or is_break_lo) and oi_chg <= -0.5 and ratio >= 4.0 and aggr_pct >= 60.0:
+        pattern_title = "🪤 ПАТТЕРН Б: ВЫНОС ЛИКВИДАЦИЙ (Не догонять! Ждём ложный пробой)"
+        action_hint = "Пробой на закрытии стопов! По рынку НЕ входим — ждём возврат цены обратно за пробитый уровень для входа в контртренд."
+    elif (not is_break_hi and not is_break_lo) and oi_chg >= 0.8 and ratio >= 3.0 and aggr_pct >= 62.0:
+        pattern_title = "🧨 ПАТТЕРН В: НАБОР КРУПНОГО ИГРОКА В ДИАПАЗОНЕ (Ранний выход)"
+        action_hint = "Крупный участник заливает новые деньги до пробоя уровня — готовимся к выходу из 20-свечного диапазона."
+    else:
         return symbol, None
 
     if is_green:
-        side = "🟢 ЛОНГ-ИМПУЛЬС"
+        side = "🟢 ЛОНГ"
         sl = round(l * 0.9985, 6)
         sl_pct = max((c - sl) / c * 100.0, 0.35)
         tp1 = round(c * (1.0 + sl_pct * 2.0 / 100.0), 6)
         tp2 = round(c * (1.0 + sl_pct * 3.0 / 100.0), 6)
-        lvl_txt = "🚀 ПРОБОЙ 20-свечного хая" if is_break_hi else "📈 Набор внутри диапазона"
     else:
-        side = "🔴 ШОРТ-ИМПУЛЬС"
+        side = "🔴 ШОРТ"
         sl = round(h * 1.0015, 6)
         sl_pct = max((sl - c) / c * 100.0, 0.35)
         tp1 = round(c * (1.0 - sl_pct * 2.0 / 100.0), 6)
         tp2 = round(c * (1.0 - sl_pct * 3.0 / 100.0), 6)
-        lvl_txt = "🩸 ПРОБОЙ 20-свечного лоя" if is_break_lo else "📉 Слив внутри диапазона"
 
     pos_usdt = min(round(2.20 / (sl_pct / 100.0)), 250)
     move_pct = ((c - o) / o) * 100.0
-    header = "🚨 ЭКСТРЕМАЛЬНАЯ АНОМАЛИЯ 5m" if ratio >= EXTREME_MULT else "⚡ АНОМАЛИЯ ОБЪЁМА 5m"
     aggr_word = "покупки" if is_green else "продажи"
 
     text = (
-        f"{header}: <b>{symbol}</b> | {side}\n"
-        f"📍 Уровень: <b>{lvl_txt}</b> ({state})\n"
+        f"<b>{pattern_title}</b>\n"
+        f"🪙 Монета: <b>{symbol}</b> ({side} | {state})\n"
         f"📊 Объём: <b>x{ratio:.1f}</b> ({vol_usdt:,.0f}$ / ср. {avg_usdt:,.0f}$) | Свеча: <b>{move_pct:+.2f}%</b>\n"
         f"⚖️ Агрессия: <b>{aggr_word} {aggr_pct:.0f}%</b> | 📈 <b>ОИ (15m): {oi_txt}</b>\n"
-        f"📐 <b>План (риск $2.20):</b> вход <code>{c}</code> | SL <code>{sl}</code> (-{sl_pct:.2f}%)\n"
-        f"💰 <b>Объём входа: ~{pos_usdt} USDT</b> | TP1: <code>{tp1}</code> | TP2: <code>{tp2}</code>"
+        f"💡 <b>Действие:</b> {action_hint}\n"
+        f"📐 <b>План (риск $2.20 → ~{pos_usdt} USDT):</b>\n"
+        f"• Вход: <code>{c}</code> | SL: <code>{sl}</code> (-{sl_pct:.2f}%)\n"
+        f"• TP1 (50% в БУ): <code>{tp1}</code> | TP2: <code>{tp2}</code>"
     )
     return symbol, text
+
 
 
 def main():
